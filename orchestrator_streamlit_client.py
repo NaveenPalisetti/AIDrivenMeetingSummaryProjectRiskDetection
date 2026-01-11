@@ -88,11 +88,10 @@ if result:
         transcripts = result.get("transcripts", [])
 
     if events:
-        with st.expander("Event & Transcript Overview", expanded=True):
-            st.metric("Event Count", len(events))
-            st.metric("Transcript Count", len(transcripts))
-            selected_indices = event_selector(events, transcripts)
-
+        st.markdown("**Event & Transcript Overview**")
+        st.metric("Event Count", len(events))
+        st.metric("Transcript Count", len(transcripts))
+        selected_indices = event_selector(events, transcripts)
         with st.form("process_form"):
             process_submitted = st.form_submit_button("Process Selected Events")
         if process_submitted:
@@ -113,48 +112,39 @@ if result:
                         st.info(f"[DEBUG] Result: {result}")
                         st.session_state['last_result'] = result
                         st.success("Selected events processed.")
-                        # Warn if only fetch data is returned
-                        if result.get('stage') == 'fetch' and not any(k in result for k in ['processed_transcripts', 'summaries', 'jira', 'risk']):
-                            st.warning("Warning: Backend returned only fetch data after processing. No processing results were returned. Please check your backend implementation.")
                     else:
                         st.error(f"API Error: {response.status_code} {response.text}")
                 except Exception as e:
                     st.error(f"Request failed: {e}")
 
-        with st.expander("Processed Transcripts"):
-            processed = result.get("processed_transcripts", [])
-            display_processed_transcripts(processed)
-        with st.expander("Summaries"):
-            summaries = result.get("summaries", [])
-            if isinstance(summaries, str):
-                display_summaries([summaries])
-            else:
-                display_summaries(summaries)
-        with st.expander("Agent States & Outputs"):
-            if 'preproc_task_state' in result:
-                st.info(f"Preprocessing Task State: {result['preproc_task_state']}")
-            if 'preproc_response' in result:
-                st.json(result['preproc_response'])
-            if 'summ_task_state' in result:
-                st.info(f"Summarization Task State: {result['summ_task_state']}")
-            if 'summ_response' in result:
-                st.json(result['summ_response'])
-            if result.get('jira'):
-                st.info("Jira Task State:")
-                if 'jira_task_state' in result:
-                    st.write(result['jira_task_state'])
-                st.json(result['jira'])
-            if result.get('risk'):
-                st.info("Risk Detection Task State:")
-                if 'risk_task_state' in result:
-                    st.write(result['risk_task_state'])
-                st.json(result['risk'])
-        with st.expander("Errors & Debug Info"):
-            display_errors(result)
-    else:
-        st.info("No events available to display. Please try fetching again or check your data source.")
-        with st.expander("Raw Backend Response for Debugging"):
-            st.code(json.dumps(result, indent=2), language="json")
+    with st.expander("Processed Transcripts"):
+        processed = result.get("processed_transcripts", [])
+        display_processed_transcripts(processed)
+    with st.expander("Agent States & Outputs"):
+        if 'preproc_task_state' in result:
+            st.info(f"Preprocessing Task State: {result['preproc_task_state']}")
+        if 'preproc_response' in result:
+            st.json(result['preproc_response'])
+        if 'summ_task_state' in result:
+            st.info(f"Summarization Task State: {result['summ_task_state']}")
+        if 'summ_response' in result:
+            st.json(result['summ_response'])
+        if result.get('jira'):
+            st.info("Jira Task State:")
+            if 'jira_task_state' in result:
+                st.write(result['jira_task_state'])
+            st.json(result['jira'])
+        if result.get('risk'):
+            st.info("Risk Detection Task State:")
+            if 'risk_task_state' in result:
+                st.write(result['risk_task_state'])
+            st.json(result['risk'])
+    with st.expander("Errors & Debug Info"):
+        display_errors(result)
+else:
+    st.info("No events available to display. Please try fetching again or check your data source.")
+    with st.expander("Raw Backend Response for Debugging"):
+        st.code(json.dumps(result, indent=2), language="json")
 
 # Chat input at the bottom
 if "clear_input" not in st.session_state:
@@ -222,5 +212,14 @@ if result and "processed_transcripts" in result:
                         st.error(f"Summarization failed: {response.status_code} {response.text}")
                 except Exception as e:
                     st.error(f"Summarization request failed: {e}")
+
+    # Show summaries clearly after summarization
+    if result.get("summaries"):
+        st.markdown("## Summaries")
+        summaries = result.get("summaries", [])
+        if isinstance(summaries, str):
+            display_summaries([summaries])
+        else:
+            display_summaries(summaries)
 
 
