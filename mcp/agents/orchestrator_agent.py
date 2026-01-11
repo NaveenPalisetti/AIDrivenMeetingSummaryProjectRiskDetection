@@ -27,7 +27,7 @@ class OrchestratorAgent:
         self.tasks = {}
 
     @a2a_endpoint
-    def handle_query(self, query: str, user: str, date: str = None, permissions: list = None, selected_event_indices: list = None, mode: str = None, create_jira: bool = False, stage: str = "fetch") -> dict:
+    def handle_query(self, query: str, selected_event_indices: list = None, mode: str = None, user: str = None, date: str = None, permissions: list = None, create_jira: bool = False, stage: str = "fetch") -> dict:
         """
         Interactive, stepwise workflow for orchestrator:
         stage: 'fetch' | 'preprocess' | 'summarize' | 'jira' | 'risk' | 'notify'

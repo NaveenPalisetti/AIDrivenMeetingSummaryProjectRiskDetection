@@ -96,19 +96,26 @@ if result:
         with st.form("process_form"):
             process_submitted = st.form_submit_button("Process Selected Events")
         if process_submitted:
+            st.info(f"[DEBUG] Selected indices: {selected_indices}")
             payload = {
                 "query": "process_selected_events",
-                "user": "guest",
                 "selected_event_indices": selected_indices,
                 "mode": mode
             }
+            st.info(f"[DEBUG] Payload: {payload}")
             with st.spinner("Processing selected events..."):
                 try:
                     response = requests.post(API_URL, json=payload)
+                    st.info(f"[DEBUG] Response status: {response.status_code}")
+                    st.info(f"[DEBUG] Response text: {response.text}")
                     if response.status_code == 200:
                         result = response.json()
+                        st.info(f"[DEBUG] Result: {result}")
                         st.session_state['last_result'] = result
                         st.success("Selected events processed.")
+                        # Warn if only fetch data is returned
+                        if result.get('stage') == 'fetch' and not any(k in result for k in ['processed_transcripts', 'summaries', 'jira', 'risk']):
+                            st.warning("Warning: Backend returned only fetch data after processing. No processing results were returned. Please check your backend implementation.")
                     else:
                         st.error(f"API Error: {response.status_code} {response.text}")
                 except Exception as e:
@@ -164,7 +171,6 @@ if send_clicked and chat_input:
     st.session_state["chat_history"].append({"role": "user", "content": chat_input})
     payload = {
         "query": chat_input,
-        "user": "guest",
         "mode": mode
     }
     with st.spinner("Processing your request..."):

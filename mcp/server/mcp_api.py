@@ -20,9 +20,8 @@ class TranscriptIn(BaseModel):
 
 class OrchestratorIn(BaseModel):
     query: str
-    user: str
-    date: str = None
-    permissions: list = None
+    selected_event_indices: list = None
+    mode: str = None
 
 
 @app.post("/mcp/summarize")
@@ -36,11 +35,15 @@ async def summarize(transcript_in: TranscriptIn):
 # New endpoint for orchestrator agent
 @app.post("/mcp/orchestrate")
 async def orchestrate(orchestrator_in: OrchestratorIn):
+    # Determine stage based on query
+    stage = "fetch"
+    if orchestrator_in.query == "process_selected_events":
+        stage = "preprocess"
     # Call the orchestrator agent's handle_query method
     result = orchestrator.handle_query(
         query=orchestrator_in.query,
-        user=orchestrator_in.user,
-        date=orchestrator_in.date,
-        permissions=orchestrator_in.permissions
+        selected_event_indices=orchestrator_in.selected_event_indices,
+        mode=orchestrator_in.mode,
+        stage=stage
     )
     return result
