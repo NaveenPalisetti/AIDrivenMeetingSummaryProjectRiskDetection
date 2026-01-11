@@ -3,8 +3,18 @@ import asyncio  # Used in async summarize
 import json
 import uuid
 
-with open('mcp/config/credentials.json') as f:
-    creds = json.load(f)
+
+# Robust credentials loading: try local, else fallback to Google Drive
+cred_path_local = 'mcp/config/credentials.json'
+cred_path_drive = '/content/drive/MyDrive/Dissertation/Project/credentials.json'
+if os.path.exists(cred_path_local):
+    with open(cred_path_local) as f:
+        creds = json.load(f)
+elif os.path.exists(cred_path_drive):
+    with open(cred_path_drive) as f:
+        creds = json.load(f)
+else:
+    creds = {}
 os.environ["OPENAI_API_KEY"] = creds.get("openai_api_key", "")
 
 from mcp.core.context_handler import ContextHandler

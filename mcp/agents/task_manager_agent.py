@@ -5,8 +5,18 @@ from mcp.agents.notification_agent import NotificationAgent
 from mcp.tools.jira_monitor import notify_due_tasks, notify_sprints_ending_soon
 from mcp.agents.task_utils import extract_and_create_tasks
 
-with open('mcp/config/credentials.json') as f:
-	creds = json.load(f)
+
+# Robust credentials loading: try local, else fallback to Google Drive
+cred_path_local = 'mcp/config/credentials.json'
+cred_path_drive = '/content/drive/MyDrive/Dissertation/Project/credentials.json'
+if os.path.exists(cred_path_local):
+	with open(cred_path_local) as f:
+		creds = json.load(f)
+elif os.path.exists(cred_path_drive):
+	with open(cred_path_drive) as f:
+		creds = json.load(f)
+else:
+	creds = {}
 jira = creds.get("jira", {})
 
 os.environ["JIRA_URL"] = jira.get("base_url", "")
