@@ -13,7 +13,16 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-SERVICE_ACCOUNT_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), '../config/credentials.json'))
+
+# Robust credentials path: try local, else fallback to Google Drive
+cred_path_local = os.path.abspath(os.path.join(os.path.dirname(__file__), '../config/credentials.json'))
+cred_path_drive = '/content/drive/MyDrive/Dissertation/Project/credentials.json'
+if os.path.exists(cred_path_local):
+    SERVICE_ACCOUNT_FILE = cred_path_local
+elif os.path.exists(cred_path_drive):
+    SERVICE_ACCOUNT_FILE = cred_path_drive
+else:
+    SERVICE_ACCOUNT_FILE = cred_path_local  # fallback, will error if not found
 
 class MCPGoogleCalendar:
     def __init__(self, calendar_id='primary'):
