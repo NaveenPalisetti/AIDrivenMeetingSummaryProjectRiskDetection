@@ -39,6 +39,8 @@ async def orchestrate(orchestrator_in: OrchestratorIn):
     stage = "fetch"
     if orchestrator_in.query == "process_selected_events":
         stage = "preprocess"
+    elif "summarize" in orchestrator_in.query.lower():
+        stage = "summarize"
     # Call the orchestrator agent's handle_query method
     result = orchestrator.handle_query(
         query=orchestrator_in.query,
