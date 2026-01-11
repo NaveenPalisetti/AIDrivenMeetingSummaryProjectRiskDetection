@@ -27,7 +27,7 @@ class OrchestratorAgent:
         self.tasks = {}
 
     @a2a_endpoint
-    def handle_query(self, query: str, selected_event_indices: list = None, mode: str = None, user: str = None, date: str = None, permissions: list = None, create_jira: bool = False, stage: str = "fetch") -> dict:
+    def handle_query(self, query: str, selected_event_indices: list = None, mode: str = None, user: str = None, date: str = None, permissions: list = None, create_jira: bool = False, stage: str = "fetch", processed_transcripts: list = None) -> dict:
         """
         Interactive, stepwise workflow for orchestrator:
         stage: 'fetch' | 'preprocess' | 'summarize' | 'jira' | 'risk' | 'notify'
@@ -75,6 +75,7 @@ class OrchestratorAgent:
                     selected_transcripts = cal_transcripts
                 result['selected_events'] = selected_events
                 result['selected_transcripts'] = selected_transcripts
+                result['transcript_chunks'] = selected_transcripts
                 preproc = TranscriptPreprocessingAgent()
                 preproc_payload = {"transcripts": selected_transcripts}
                 preproc_response = a2a_request(preproc.process, preproc_payload)
@@ -93,12 +94,16 @@ class OrchestratorAgent:
                 return result
 
             if stage == "summarize":
-                processed_transcripts = query.get('processed_transcripts', []) if isinstance(query, dict) else []
+                print(f"[DEBUG] Summarize stage: processed_transcripts arg: {processed_transcripts}")
+                if processed_transcripts is not None:
+                    transcripts_to_summarize = processed_transcripts
+                else:
+                    transcripts_to_summarize = query.get('processed_transcripts', []) if isinstance(query, dict) else []
                 summarizer = SummarizationAgent(mode=mode)
                 initial_msg = A2AMessage(message_id=str(uuid.uuid4()), role="user")
-                initial_msg.add_part("application/json", {"processed_transcripts": processed_transcripts, "mode": mode})
+                initial_msg.add_part("application/json", {"processed_transcripts": transcripts_to_summarize, "mode": mode})
                 task_id = summarizer.create_task(initial_msg)
-                summary_msg = summarizer.summarize_protocol(processed_transcripts=processed_transcripts, mode=mode)
+                summary_msg = summarizer.summarize_protocol(processed_transcripts=transcripts_to_summarize, mode=mode)
                 summarizer.update_task(task_id, summary_msg, TaskState.COMPLETED)
                 summaries = []
                 if hasattr(summary_msg, 'parts'):

@@ -193,4 +193,34 @@ if send_clicked and chat_input:
 elif st.session_state.get("clear_input"):
     st.session_state["clear_input"] = False
 
+# Additional section for summarizing processed events
+if result and "processed_transcripts" in result:
+    print("[DEBUG] Processed transcripts available for summarization.")
+    with st.expander("Summarize Processed Events", expanded=True):
+        with st.form("summarize_form"):
+            summarize_submitted = st.form_submit_button("Summarize Processed Events")
+        if summarize_submitted:
+            processed_transcripts = result.get("processed_transcripts", [])
+            st.info(f"[DEBUG] Summarize button clicked. Processed transcripts: {processed_transcripts}")
+            payload = {
+                "query": "summarize_processed_transcripts",
+                "processed_transcripts": processed_transcripts,
+                "mode": mode
+            }
+            st.info(f"[DEBUG] Summarize payload: {payload}")
+            with st.spinner("Summarizing processed events..."):
+                try:
+                    response = requests.post(API_URL, json=payload)
+                    st.info(f"[DEBUG] Summarize response status: {response.status_code}")
+                    st.info(f"[DEBUG] Summarize response text: {response.text}")
+                    if response.status_code == 200:
+                        result = response.json()
+                        st.info(f"[DEBUG] Summarize result: {result}")
+                        st.session_state['last_result'] = result
+                        st.success("Summarization complete.")
+                    else:
+                        st.error(f"Summarization failed: {response.status_code} {response.text}")
+                except Exception as e:
+                    st.error(f"Summarization request failed: {e}")
+
 

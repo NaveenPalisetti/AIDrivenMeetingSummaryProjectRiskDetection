@@ -22,6 +22,7 @@ class OrchestratorIn(BaseModel):
     query: str
     selected_event_indices: list = None
     mode: str = None
+    processed_transcripts: list = None
 
 
 @app.post("/mcp/summarize")
@@ -46,6 +47,7 @@ async def orchestrate(orchestrator_in: OrchestratorIn):
         query=orchestrator_in.query,
         selected_event_indices=orchestrator_in.selected_event_indices,
         mode=orchestrator_in.mode,
-        stage=stage
+        stage=stage,
+        processed_transcripts=orchestrator_in.processed_transcripts
     )
     return result
