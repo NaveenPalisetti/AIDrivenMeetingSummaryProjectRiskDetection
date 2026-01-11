@@ -1,7 +1,12 @@
+
 """
 Streamlit Orchestrator Client: A standalone Streamlit app that sends user queries to the orchestrator API endpoint and displays results.
 """
 
+# Ensure project root is in sys.path for package imports (works in Colab, local, etc)
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 import streamlit as st
 import requests
