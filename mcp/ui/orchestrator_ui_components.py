@@ -9,7 +9,7 @@ def event_selector(events, transcripts):
         title = e.get('summary') or e.get('title') or f"Event {i+1}"
         start = e.get('start', {}).get('dateTime', '') or e.get('start', {}).get('date', '')
         event_titles.append(f"{i+1}. {title} ({start})")
-    selected = st.multiselect("Select events to process:", event_titles, default=event_titles[:1])
+    selected = st.multiselect("Select events to process:", event_titles, default=event_titles[:1], key=f"event_selector_{id(events)}")
     selected_indices = [event_titles.index(s) for s in selected]
     return selected_indices
 
