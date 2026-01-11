@@ -1,0 +1,12 @@
+transformers>=4.36.0
+torch>=2.0.0
+fastapi
+uvicorn[standard]
+pydantic
+requests
+streamlit
+pytest
+jira
+google-api-python-client
+google-auth
+google-auth-oauthlib
