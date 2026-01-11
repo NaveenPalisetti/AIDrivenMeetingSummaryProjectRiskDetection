@@ -146,43 +146,6 @@ else:
     with st.expander("Raw Backend Response for Debugging"):
         st.code(json.dumps(result, indent=2), language="json")
 
-# Chat input at the bottom
-if "clear_input" not in st.session_state:
-    st.session_state["clear_input"] = False
-
-chat_input = st.text_input(
-    "Type your message and press Enter",
-    key="chat_input",
-    value="" if st.session_state["clear_input"] else st.session_state.get("chat_input", "")
-)
-send_clicked = st.button("Send", key="send_btn")
-
-if send_clicked and chat_input:
-    st.session_state["chat_history"].append({"role": "user", "content": chat_input})
-    payload = {
-        "query": chat_input,
-        "mode": mode
-    }
-    with st.spinner("Processing your request..."):
-        try:
-            response = requests.post(API_URL, json=payload)
-            if response.status_code == 200:
-                result = response.json()
-                st.session_state["chat_history"].append({"role": "orchestrator", "content": result})
-                st.session_state['last_result'] = result
-                st.session_state["_last_chat_input"] = chat_input
-                st.session_state["clear_input"] = True
-                st.rerun()
-            else:
-                st.session_state["chat_history"].append({"role": "orchestrator", "content": f"API Error: {response.status_code} {response.text}"})
-        except Exception as e:
-            st.session_state["chat_history"].append({"role": "orchestrator", "content": f"Request failed: {e}"})
-        st.session_state["_last_chat_input"] = chat_input
-        st.session_state["clear_input"] = True
-        st.rerun()
-elif st.session_state.get("clear_input"):
-    st.session_state["clear_input"] = False
-
 # Additional section for summarizing processed events
 if result and "processed_transcripts" in result:
     print("[DEBUG] Processed transcripts available for summarization.")
@@ -221,5 +184,41 @@ if result and "processed_transcripts" in result:
             display_summaries([summaries])
         else:
             display_summaries(summaries)
+
+# Move chat input and Send button to the bottom
+st.markdown("---")
+st.markdown("### Type your message and press Enter")
+chat_input = st.text_input(
+    "Type your message and press Enter",
+    key="chat_input",
+    value="" if st.session_state.get("clear_input", False) else st.session_state.get("chat_input", "")
+)
+send_clicked = st.button("Send", key="send_btn")
+
+if send_clicked and chat_input:
+    st.session_state["chat_history"].append({"role": "user", "content": chat_input})
+    payload = {
+        "query": chat_input,
+        "mode": mode
+    }
+    with st.spinner("Processing your request..."):
+        try:
+            response = requests.post(API_URL, json=payload)
+            if response.status_code == 200:
+                result = response.json()
+                st.session_state["chat_history"].append({"role": "orchestrator", "content": result})
+                st.session_state['last_result'] = result
+                st.session_state["_last_chat_input"] = chat_input
+                st.session_state["clear_input"] = True
+                st.rerun()
+            else:
+                st.session_state["chat_history"].append({"role": "orchestrator", "content": f"API Error: {response.status_code} {response.text}"})
+        except Exception as e:
+            st.session_state["chat_history"].append({"role": "orchestrator", "content": f"Request failed: {e}"})
+        st.session_state["_last_chat_input"] = chat_input
+        st.session_state["clear_input"] = True
+        st.rerun()
+elif st.session_state.get("clear_input"):
+    st.session_state["clear_input"] = False
 
 
