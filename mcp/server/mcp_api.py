@@ -42,6 +42,10 @@ async def orchestrate(orchestrator_in: OrchestratorIn):
         stage = "preprocess"
     elif "summarize" in orchestrator_in.query.lower():
         stage = "summarize"
+    elif "jira" in orchestrator_in.query.lower():
+        stage = "jira"
+    elif "risk" in orchestrator_in.query.lower():
+        stage = "risk"
     # Call the orchestrator agent's handle_query method
     result = orchestrator.handle_query(
         query=orchestrator_in.query,

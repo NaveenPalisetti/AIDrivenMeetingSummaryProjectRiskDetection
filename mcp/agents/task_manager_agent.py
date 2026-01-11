@@ -1,6 +1,8 @@
 from mcp.core.utils import gen_id
 from mcp.core.a2a_base_agent import A2AAgent, AgentCard, AgentCapability, A2AMessage
 import os, json, uuid
+from mcp.agents.notification_agent import NotificationAgent
+from mcp.tools.jira_monitor import notify_due_tasks, notify_sprints_ending_soon
 
 with open('mcp/config/credentials.json') as f:
 	creds = json.load(f)
@@ -98,8 +100,7 @@ class TaskManagerAgent(A2AAgent):
 		return ending_soon
 
 	def extract_and_create_tasks(self, meeting_id: str, summary: dict):
-		from mcp.tools.notification import send_notification
-		from mcp.tools.jira_monitor import notify_due_tasks, notify_sprints_ending_soon
+		
 		tasks = []
 		raw_actions = summary.get('action_items') or []
 		if not raw_actions and 'summary_text' in summary:
@@ -154,7 +155,7 @@ class TaskManagerAgent(A2AAgent):
 						try:
 							due_dt = datetime.strptime(due[:10], '%Y-%m-%d')
 							if due_dt - datetime.utcnow() <= timedelta(days=2):
-								send_notification(f"Jira Task '{jira_title}' is due soon: {due}")
+								NotificationAgent().notify(f"Jira Task '{jira_title}' is due soon: {due}")
 						except Exception as e:
 							print(f"[TaskManagerAgent] Error parsing due date for notification: {e}")
 				except Exception as e:
