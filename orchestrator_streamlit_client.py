@@ -227,7 +227,7 @@ elif st.session_state.get("clear_input"):
     st.session_state["clear_input"] = False
 
     # Show detected risks clearly after risk step
-    if result.get("risk"):
+    if result and result.get("risk"):
         st.markdown("## Detected Risks")
         risks = result.get("risk", [])
         for risk_obj in risks:
