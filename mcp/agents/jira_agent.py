@@ -19,12 +19,11 @@ class JiraAgent(A2AAgent):
         super().__init__(agent_card)
 
     def create_jira(self, summary, user=None, date=None):
-        from mcp.agents.task_manager_agent import TaskManagerAgent
+        from mcp.agents.task_utils import extract_and_create_tasks
         meeting_id = date or "meeting"
         if isinstance(summary, str):
             summary = {"summary_text": summary}
-        task_manager = TaskManagerAgent()
-        tasks = task_manager.extract_and_create_tasks(meeting_id, summary)
+        tasks = extract_and_create_tasks(meeting_id, summary)
         message = A2AMessage(message_id=str(uuid.uuid4()), role="agent")
         message.add_part("application/json", {"created_tasks": tasks, "user": user, "date": date})
         return message

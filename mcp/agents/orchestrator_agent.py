@@ -33,7 +33,7 @@ class OrchestratorAgent:
         stage: 'fetch' | 'preprocess' | 'summarize' | 'jira' | 'risk' | 'notify'
         """
         print(f"[DEBUG] OrchestratorAgent.handle_query stage: {stage}, mode: {mode}, create_jira: {create_jira}")
-        mode = "bart"  # Force BART mode regardless of input
+        # mode = "bart"  # Force BART mode regardless of input
         result = {"stage": stage}
         try:
             if stage == "fetch":

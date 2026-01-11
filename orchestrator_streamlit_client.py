@@ -221,4 +221,19 @@ if send_clicked and chat_input:
 elif st.session_state.get("clear_input"):
     st.session_state["clear_input"] = False
 
+    # Show detected risks clearly after risk step
+    if result.get("risk"):
+        st.markdown("## Detected Risks")
+        risks = result.get("risk", [])
+        for risk_obj in risks:
+            if isinstance(risk_obj, dict) and "parts" in risk_obj:
+                for part in risk_obj["parts"]:
+                    if part.get("content_type") == "application/json":
+                        detected = part.get("content", {}).get("detected_risks", [])
+                        if isinstance(detected, str):
+                            import ast
+                            detected = ast.literal_eval(detected)
+                        for r in detected:
+                            st.info(f"**Risk ID:** {r.get('id', '-')}, **Description:** {r.get('description', '-')}, **Severity:** {r.get('severity', '-')} ")
+
 

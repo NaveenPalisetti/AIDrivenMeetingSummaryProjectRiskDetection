@@ -46,6 +46,8 @@ async def orchestrate(orchestrator_in: OrchestratorIn):
         stage = "jira"
     elif "risk" in orchestrator_in.query.lower():
         stage = "risk"
+    elif "notify" in orchestrator_in.query.lower():
+        stage = "notify"
     # Call the orchestrator agent's handle_query method
     result = orchestrator.handle_query(
         query=orchestrator_in.query,

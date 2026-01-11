@@ -1,4 +1,3 @@
-
 import os
 import asyncio  # Used in async summarize
 import json
@@ -56,7 +55,8 @@ def get_mistral_model():
         if mistral_drive_path and os.path.exists(mistral_drive_path):
             model_path = mistral_drive_path
         else:
-            model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "models", "mistral-7B-Instruct-v0.2"))
+            # Hardcoded path for user's actual Mistral model location
+            model_path = r"H:\Learning\BITS\Dissertation\Project\Week6\AIDrivenMeetingSummarizationTest\models\mistral-7B-Instruct-v0.2"
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Mistral model path not found: {model_path}")
         get_mistral_model.tokenizer = AutoTokenizer.from_pretrained(model_path)

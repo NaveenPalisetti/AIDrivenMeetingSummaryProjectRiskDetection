@@ -3,6 +3,7 @@ from mcp.core.a2a_base_agent import A2AAgent, AgentCard, AgentCapability, A2AMes
 import os, json, uuid
 from mcp.agents.notification_agent import NotificationAgent
 from mcp.tools.jira_monitor import notify_due_tasks, notify_sprints_ending_soon
+from mcp.agents.task_utils import extract_and_create_tasks
 
 with open('mcp/config/credentials.json') as f:
 	creds = json.load(f)
@@ -99,74 +100,5 @@ class TaskManagerAgent(A2AAgent):
 			print(f"[TaskManagerAgent] Error fetching sprints: {e}")
 		return ending_soon
 
-	def extract_and_create_tasks(self, meeting_id: str, summary: dict):
-		
-		tasks = []
-		raw_actions = summary.get('action_items') or []
-		if not raw_actions and 'summary_text' in summary:
-			st = summary['summary_text']
-			raw_actions = [st] if len(st) < 200 else st.split(';')[:1]
-
-		with open(self.tasks_file, 'r', encoding='utf-8') as f:
-			existing = json.load(f)
-
-		MAX_SUMMARY_LEN = 255
-
-		for a in raw_actions:
-			if isinstance(a, dict):
-				title = a.get('description') or a.get('task') or str(a)
-				owner = a.get('assignee') or a.get('owner')
-				due = a.get('due_date') or a.get('deadline')
-			else:
-				title = str(a)
-				owner = None
-				due = None
-
-			jira_title = title.replace('\n', ' ').replace('\r', ' ')[:MAX_SUMMARY_LEN]
-
-			t = {
-				'id': gen_id('task'),
-				'meeting_id': meeting_id,
-				'title': title,
-				'owner': owner,
-				'status': 'open'
-			}
-			existing.append(t)
-			tasks.append(t)
-
-			# --- JIRA Integration ---
-			if self.jira:
-				issue_dict = {
-					'project': {'key': self.jira_project},
-					'summary': jira_title,
-					'description': f"Auto-created from meeting {meeting_id}",
-					'issuetype': {'name': 'Task'},
-				}
-				if owner:
-					issue_dict['assignee'] = {'name': owner}
-				if due:
-					issue_dict['duedate'] = due
-				try:
-					issue = self.jira.create_issue(fields=issue_dict)
-					t['jira_issue'] = issue.key
-					# Notify if due date is within 2 days
-					from datetime import datetime, timedelta
-					if due:
-						try:
-							due_dt = datetime.strptime(due[:10], '%Y-%m-%d')
-							if due_dt - datetime.utcnow() <= timedelta(days=2):
-								NotificationAgent().notify(f"Jira Task '{jira_title}' is due soon: {due}")
-						except Exception as e:
-							print(f"[TaskManagerAgent] Error parsing due date for notification: {e}")
-				except Exception as e:
-					t['jira_error'] = str(e)
-
-		with open(self.tasks_file, 'w', encoding='utf-8') as f:
-			json.dump(existing, f, indent=2)
-		# After creating tasks, trigger due/sprint notifications
-		notify_due_tasks(days=2)
-		notify_sprints_ending_soon(days=2)
-		
-		message = A2AMessage(message_id=str(uuid.uuid4()), role="agent")
-		message.add_part("application/json", {"created_tasks": tasks, "meeting_id": meeting_id})
-		return message
+	def extract_and_create_tasks(self, meeting_id, summary):
+		return extract_and_create_tasks(meeting_id, summary)
