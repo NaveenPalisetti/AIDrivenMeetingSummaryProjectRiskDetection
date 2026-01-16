@@ -17,7 +17,7 @@ from mcp.ui.orchestrator_ui_components import (
 st.set_page_config(page_title="AI Orchestrator Client", layout="wide")
 #API_URL = "http://localhost:8000/mcp/orchestrate"  # Adjust if your FastAPI server runs elsewhere
 #API_URL = "https://unswerving-nontropically-toshia.ngrok-free.dev/mcp/orchestrate"  # Use ngrok public URL for FastAPI backend
-API_URL = "https://unswerving-nontropically-toshia.ngrok-free.dev/mcp/orchestrate"
+API_URL = "https://unswerving-nontropically-toshia.ngrok-free.dev"
 
 st.title("🤖 AI Orchestrator Client")
 st.caption("This app sends queries to the orchestrator API and displays the workflow results.")
