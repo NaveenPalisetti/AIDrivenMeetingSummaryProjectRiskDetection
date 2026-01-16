@@ -77,6 +77,11 @@ def get_mistral_model():
         except Exception as e:
             print(f"[WARN] 4-bit quantization failed or bitsandbytes not available: {e}\nFalling back to normal model load.")
             get_mistral_model.model = AutoModelForCausalLM.from_pretrained(model_path)
+        # Debug prints for device info
+        import torch
+        print("CUDA available:", torch.cuda.is_available())
+        print("CUDA device:", torch.cuda.current_device() if torch.cuda.is_available() else "CPU")
+        print("Model device:", next(get_mistral_model.model.parameters()).device)
     return get_mistral_model.tokenizer, get_mistral_model.model
 
 
