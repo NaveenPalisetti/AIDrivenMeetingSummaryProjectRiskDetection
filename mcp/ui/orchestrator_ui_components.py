@@ -30,7 +30,22 @@ def display_summaries(summaries):
     if summaries:
         st.subheader("Summaries:")
         for i, summary in enumerate(summaries, 1):
-            st.markdown(f"**Summary {i}:**\n{summary}")
+            if isinstance(summary, list):
+                st.markdown(f"**Summary {i}:**")
+                st.markdown("\n".join([f"- {item}" for item in summary]))
+            else:
+                # If summary is a string representation of a list, try to parse and display as bullets
+                import ast
+                try:
+                    parsed = ast.literal_eval(summary)
+                    if isinstance(parsed, list):
+                        st.markdown(f"**Summary {i}:**")
+                        st.markdown("\n".join([f"- {item}" for item in parsed]))
+                    else:
+                        st.markdown(f"**Summary {i}:**\n{summary}")
+                except Exception:
+                    st.markdown(f"**Summary {i}:**\n{summary}")
+            st.markdown("&nbsp;")  # Add spacing between summaries
 
 def display_errors(result):
     if result.get("calendar_error"):
@@ -39,3 +54,16 @@ def display_errors(result):
         st.error(f"Preprocessing Error: {result['preprocessing_error']}")
     if result.get("summarization_error"):
         st.error(f"Summarization Error: {result['summarization_error']}")
+
+def display_action_items(action_items):
+    if action_items:
+        st.subheader("Action Items:")
+        # If action_items is a list of dicts, show as table
+        if isinstance(action_items, list) and all(isinstance(ai, dict) for ai in action_items):
+            st.table(action_items)
+        # If action_items is a list of strings, show as bullets
+        elif isinstance(action_items, list):
+            for item in action_items:
+                st.markdown(f"- {item}")
+        else:
+            st.markdown(str(action_items))

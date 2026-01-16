@@ -1,4 +1,3 @@
-
 """
 Streamlit Orchestrator Client: A standalone Streamlit app that sends user queries to the orchestrator API endpoint and displays results.
 """
@@ -194,6 +193,13 @@ if result and "processed_transcripts" in result:
             display_summaries([summaries])
         else:
             display_summaries(summaries)
+
+    # Show action items clearly after summarization
+    if result.get("action_items"):
+        from mcp.ui.orchestrator_ui_components import display_action_items
+        st.markdown("## Action Items")
+        action_items = result.get("action_items", [])
+        display_action_items(action_items)
 
 # Move chat input and Send button to the bottom
 st.markdown("---")
