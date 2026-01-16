@@ -108,6 +108,12 @@ if result:
             st.info(f"[DEBUG] Payload: {payload}")
             with st.spinner("Processing selected events..."):
                 try:
+                    st.info(f"[DEBUG] Sending request to API_URL: {API_URL}")
+                    import socket
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    result_port = sock.connect_ex(('localhost', 8000))
+                    st.info(f"[DEBUG] Port 8000 status: {'open' if result_port == 0 else 'closed'}")
+                    sock.close()
                     response = requests.post(API_URL, json=payload)
                     st.info(f"[DEBUG] Response status: {response.status_code}")
                     st.info(f"[DEBUG] Response text: {response.text}")
