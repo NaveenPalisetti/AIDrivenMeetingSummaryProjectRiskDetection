@@ -66,21 +66,25 @@ def get_mistral_model():
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Mistral model path not found: {model_path}")
         get_mistral_model.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        try:
-            print(f"[INFO] Attempting to load Mistral from {model_path} in 4-bit quantized mode (bitsandbytes)...")
-            get_mistral_model.model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                device_map="auto",
-                quantization_config=BitsAndBytesConfig(load_in_4bit=True)
-            )
-            print("[INFO] Loaded Mistral in 4-bit quantized mode.")
-        except Exception as e:
-            print(f"[WARN] 4-bit quantization failed or bitsandbytes not available: {e}\nFalling back to normal model load.")
-            get_mistral_model.model = AutoModelForCausalLM.from_pretrained(model_path)
-        # Debug prints for device info
         import torch
         print("CUDA available:", torch.cuda.is_available())
-        print("CUDA device:", torch.cuda.current_device() if torch.cuda.is_available() else "CPU")
+        if not torch.cuda.is_available():
+            raise RuntimeError("No CUDA GPU detected. Please ensure your Colab runtime is set to GPU.")
+        try:
+            print(f"[INFO] Attempting to load Mistral from {model_path} in 4-bit quantized mode (bitsandbytes) on GPU...")
+            get_mistral_model.model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                device_map="cuda",
+                quantization_config=BitsAndBytesConfig(load_in_4bit=True)
+            )
+            print("[INFO] Loaded Mistral in 4-bit quantized mode on GPU.")
+        except Exception as e:
+            print(f"[WARN] 4-bit quantization failed or bitsandbytes not available: {e}\nFalling back to normal model load on GPU.")
+            get_mistral_model.model = AutoModelForCausalLM.from_pretrained(
+                model_path,
+                device_map="cuda"
+            )
+        print("CUDA device:", torch.cuda.current_device())
         print("Model device:", next(get_mistral_model.model.parameters()).device)
     return get_mistral_model.tokenizer, get_mistral_model.model
 
