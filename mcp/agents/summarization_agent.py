@@ -62,7 +62,7 @@ def get_mistral_model():
     if not hasattr(get_mistral_model, "tokenizer") or not hasattr(get_mistral_model, "model"):
         # Check for Google Drive path via env var, else fallback to local
         # Always use Google Drive path for Colab
-        model_path = "/content/drive/MyDrive/Dissertation/Project/models/mistral-7B-Instruct-v0.2"
+        model_path = "/content/mistral-7B-Instruct-v0.2"
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Mistral model path not found: {model_path}")
         get_mistral_model.tokenizer = AutoTokenizer.from_pretrained(model_path)
