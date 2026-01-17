@@ -39,8 +39,12 @@ class OrchestratorAgent:
         result = {"stage": stage}
         try:
             if stage == "fetch":
-                # Use LangChain calendar tool if enabled
-                use_lc = os.environ.get("USE_LANGCHAIN_TOOLS", "0") == "1"
+                # Use LangChain calendar tool by default when available; env var can disable
+                use_lc_env = os.environ.get("USE_LANGCHAIN_TOOLS")
+                if use_lc_env is None:
+                    use_lc = hasattr(lc_tools, 'fetch_calendar_events_tool')
+                else:
+                    use_lc = use_lc_env == "1"
                 import datetime
                 now = datetime.datetime.utcnow()
                 start_time = now - datetime.timedelta(days=37)
@@ -113,7 +117,12 @@ class OrchestratorAgent:
                     transcripts_to_summarize = processed_transcripts
                 else:
                     transcripts_to_summarize = query.get('processed_transcripts', []) if isinstance(query, dict) else []
-                use_lc = os.environ.get("USE_LANGCHAIN_TOOLS", "0") == "1"
+                # Prefer LangChain summarize tool by default when available; env var can disable
+                use_lc_env = os.environ.get("USE_LANGCHAIN_TOOLS")
+                if use_lc_env is None:
+                    use_lc = hasattr(lc_tools, 'summarize_meeting')
+                else:
+                    use_lc = use_lc_env == "1"
                 summaries = []
                 # Prefer calling LangChain summarize tool when enabled
                 if use_lc and hasattr(lc_tools, 'summarize_meeting'):
@@ -165,8 +174,12 @@ class OrchestratorAgent:
                 created_tasks = query.get('jira', [{}])[0] if isinstance(query, dict) and 'jira' in query else []
                 summary_for_risk = summaries[0] if summaries else ""
                 tasks_for_risk = created_tasks.get('created_tasks', []) if isinstance(created_tasks, dict) else []
-                # Prefer LangChain risk tool if available
-                use_lc = os.environ.get("USE_LANGCHAIN_TOOLS", "0") == "1"
+                # Prefer LangChain risk tool if available (default ON when tool exists)
+                use_lc_env = os.environ.get("USE_LANGCHAIN_TOOLS")
+                if use_lc_env is None:
+                    use_lc = hasattr(lc_tools, 'detect_risks_tool')
+                else:
+                    use_lc = use_lc_env == "1"
                 detected_risks = []
                 if use_lc and hasattr(lc_tools, 'detect_risks_tool'):
                     try:
@@ -193,7 +206,12 @@ class OrchestratorAgent:
                 summary_for_notify = summaries[0] if summaries else ""
                 tasks_for_notify = created_tasks.get('created_tasks', []) if isinstance(created_tasks, dict) else []
                 detected_risks = risks.get('parts', [{}])[0].get('content', {}).get('detected_risks', []) if isinstance(risks, dict) else []
-                use_lc = os.environ.get("USE_LANGCHAIN_TOOLS", "0") == "1"
+                # Prefer LangChain notification tool if available (default ON when tool exists)
+                use_lc_env = os.environ.get("USE_LANGCHAIN_TOOLS")
+                if use_lc_env is None:
+                    use_lc = hasattr(lc_tools, 'send_notification_tool')
+                else:
+                    use_lc = use_lc_env == "1"
                 if use_lc and hasattr(lc_tools, 'send_notification_tool'):
                     try:
                         lc_tools.send_notification_tool(task=str(tasks_for_notify[:1]), user=user)

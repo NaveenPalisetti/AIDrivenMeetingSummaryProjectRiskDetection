@@ -4,35 +4,61 @@ from mcp.agents.bart_summarizer import summarize_with_bart
 from mcp.agents.mistral_summarizer import summarize_with_mistral
 
 
-
-
 import os
-# BART model path logic
-bart_drive_path = os.environ.get("BART_MODEL_PATH")
-if bart_drive_path and os.path.exists(bart_drive_path):
-    bart_model_path = bart_drive_path
-else:
-    bart_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "models", "bart_finetuned_meeting_summary"))
-bart_tokenizer = AutoTokenizer.from_pretrained(bart_model_path)
-bart_model = AutoModelForSeq2SeqLM.from_pretrained(bart_model_path)
-
-# Mistral model path logic
-mistral_drive_path = os.environ.get("MISTRAL_MODEL_PATH")
-colab_mistral_path = "/content/mistral-7B-Instruct-v0.2"
-if mistral_drive_path and os.path.exists(mistral_drive_path):
-    mistral_model_path = mistral_drive_path
-elif os.path.exists(colab_mistral_path):
-    mistral_model_path = colab_mistral_path
-else:
-    mistral_model_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "models", "mistral_finetuned_meeting_summary"))
-try:
-    mistral_tokenizer = AutoTokenizer.from_pretrained(mistral_model_path)
-    mistral_model = AutoModelForSeq2SeqLM.from_pretrained(mistral_model_path)
-except Exception:
-    mistral_tokenizer = None
-    mistral_model = None
+# Lazy-loaded model holders
+bart_tokenizer = None
+bart_model = None
+mistral_tokenizer = None
+mistral_model = None
 
 
+def _resolve_bart_path():
+    bart_drive_path = os.environ.get("BART_MODEL_PATH")
+    if bart_drive_path and os.path.exists(bart_drive_path):
+        return bart_drive_path
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "models", "bart_finetuned_meeting_summary"))
+
+
+def _resolve_mistral_path():
+    mistral_drive_path = os.environ.get("MISTRAL_MODEL_PATH")
+    colab_mistral_path = "/content/mistral-7B-Instruct-v0.2"
+    if mistral_drive_path and os.path.exists(mistral_drive_path):
+        return mistral_drive_path
+    if os.path.exists(colab_mistral_path):
+        return colab_mistral_path
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "models", "mistral_finetuned_meeting_summary"))
+
+
+def get_bart_models():
+    """Lazily load and return (tokenizer, model) for BART. Returns (None, None) on failure."""
+    global bart_tokenizer, bart_model
+    if bart_tokenizer is None or bart_model is None:
+        model_path = _resolve_bart_path()
+        if not os.path.exists(model_path):
+            bart_tokenizer, bart_model = None, None
+            return None, None
+        try:
+            bart_tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+            bart_model = AutoModelForSeq2SeqLM.from_pretrained(model_path, local_files_only=True)
+        except Exception:
+            bart_tokenizer, bart_model = None, None
+    return bart_tokenizer, bart_model
+
+
+def get_mistral_models():
+    """Lazily load and return (tokenizer, model) for Mistral. Returns (None, None) on failure."""
+    global mistral_tokenizer, mistral_model
+    if mistral_tokenizer is None or mistral_model is None:
+        model_path = _resolve_mistral_path()
+        if not os.path.exists(model_path):
+            mistral_tokenizer, mistral_model = None, None
+            return None, None
+        try:
+            mistral_tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+            mistral_model = AutoModelForSeq2SeqLM.from_pretrained(model_path, local_files_only=True)
+        except Exception:
+            mistral_tokenizer, mistral_model = None, None
+    return mistral_tokenizer, mistral_model
 
 @tool
 def summarize_meeting(transcript: str, mode: str = "bart") -> dict:
@@ -40,14 +66,37 @@ def summarize_meeting(transcript: str, mode: str = "bart") -> dict:
     if not transcript or len(transcript.split()) < 10:
         return {"summary": "Transcript too short for summarization.", "action_items": []}
     meeting_id = "meeting"
-    if mode == "mistral" and mistral_tokenizer and mistral_model:
-        result = summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting_id)
-        summary = result.get('summary_text', '')
-        action_items = result.get('action_items', [])
+    # Attempt to lazily load requested models
+    if mode == "mistral":
+        mtok, mmod = get_mistral_models()
+        if mtok and mmod:
+            result = summarize_with_mistral(mtok, mmod, transcript, meeting_id)
+            summary = result.get('summary_text', '')
+            action_items = result.get('action_items', [])
+        else:
+            # Fallback to BART if Mistral unavailable
+            btok, bmod = get_bart_models()
+            if btok and bmod:
+                result = summarize_with_bart(btok, bmod, transcript, meeting_id)
+                summary = result.get('summary_text', '')
+                action_items = result.get('action_items', [])
+            else:
+                return {"summary": "No local models available for summarization.", "action_items": []}
     else:
-        result = summarize_with_bart(bart_tokenizer, bart_model, transcript, meeting_id)
-        summary = result.get('summary_text', '')
-        action_items = result.get('action_items', [])
+        btok, bmod = get_bart_models()
+        if btok and bmod:
+            result = summarize_with_bart(btok, bmod, transcript, meeting_id)
+            summary = result.get('summary_text', '')
+            action_items = result.get('action_items', [])
+        else:
+            # Try Mistral as fallback
+            mtok, mmod = get_mistral_models()
+            if mtok and mmod:
+                result = summarize_with_mistral(mtok, mmod, transcript, meeting_id)
+                summary = result.get('summary_text', '')
+                action_items = result.get('action_items', [])
+            else:
+                return {"summary": "No local models available for summarization.", "action_items": []}
     return {"summary": summary, "action_items": action_items}
 
 

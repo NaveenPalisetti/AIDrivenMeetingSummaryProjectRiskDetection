@@ -19,6 +19,17 @@ API_URL = "http://localhost:8000/mcp/orchestrate"  # Use local URL for FastAPI b
 st.title("🤖 AI Orchestrator Client")
 st.caption("This app sends queries to the orchestrator API and displays the workflow results.")
 
+# Small accessibility and style improvements
+st.markdown(
+    """
+    <style>
+    .stButton>button:focus {outline: 3px solid #0366d6;}
+    .reportview-container .markdown-text-container p {line-height:1.4}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # Sidebar: All options
 with st.sidebar:
     st.header("Options")
