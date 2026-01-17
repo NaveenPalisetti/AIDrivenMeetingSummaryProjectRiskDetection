@@ -113,24 +113,7 @@ for msg in st.session_state["chat_history"]:
         render_orchestrator_message(msg['content'])
 
 
-# Helper to send queries to the backend and update session state
-def send_query(payload):
-    with st.spinner("Processing your request..."):
-        try:
-            response = requests.post(API_URL, json=payload)
-            if response.status_code == 200:
-                result = response.json()
-                st.session_state["chat_history"].append({"role": "orchestrator", "content": result})
-                st.session_state['last_result'] = result
-                # Cache events/transcripts for UI selections
-                if isinstance(result, dict) and result.get('calendar_events'):
-                    st.session_state['events'] = result.get('calendar_events', [])
-                if isinstance(result, dict) and result.get('calendar_transcripts'):
-                    st.session_state['transcripts'] = result.get('calendar_transcripts', [])
-            else:
-                st.session_state["chat_history"].append({"role": "orchestrator", "content": f"API Error: {response.status_code} {response.text}"})
-        except Exception as e:
-            st.session_state["chat_history"].append({"role": "orchestrator", "content": f"Request failed: {e}"})
+
 
 # Show results/expanders after chat history
 result = st.session_state.get('last_result', None)
