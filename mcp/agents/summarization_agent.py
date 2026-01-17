@@ -59,17 +59,19 @@ def get_bart_model():
     return get_bart_model.tokenizer, get_bart_model.model
 
 def get_mistral_model():
+    # Allow disabling Mistral via env var for environments without GPU or where model isn't available
+    if os.environ.get("MISTRAL_ENABLED", "0") != "1":
+        raise RuntimeError("Mistral support is disabled. Set MISTRAL_ENABLED=1 and provide model path to enable.")
     if not hasattr(get_mistral_model, "tokenizer") or not hasattr(get_mistral_model, "model"):
-        # Check for Google Drive path via env var, else fallback to local
-        # Always use Google Drive path for Colab
-        model_path = "/content/mistral-7B-Instruct-v0.2"
+        # Prefer environment variable MISTRAL_MODEL_PATH, else fallback to common Colab path
+        model_path = os.environ.get("MISTRAL_MODEL_PATH", "/content/mistral-7B-Instruct-v0.2")
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Mistral model path not found: {model_path}")
         get_mistral_model.tokenizer = AutoTokenizer.from_pretrained(model_path)
         import torch
         print("CUDA available:", torch.cuda.is_available())
         if not torch.cuda.is_available():
-            raise RuntimeError("No CUDA GPU detected. Please ensure your Colab runtime is set to GPU.")
+            raise RuntimeError("No CUDA GPU detected. Mistral requires a GPU. Set MISTRAL_ENABLED=0 to disable.")
         try:
             print(f"[INFO] Attempting to load Mistral from {model_path} in 4-bit quantized mode (bitsandbytes) on GPU...")
             get_mistral_model.model = AutoModelForCausalLM.from_pretrained(
@@ -144,7 +146,15 @@ class SummarizationAgent(A2AAgent):
                 print("[SummarizationAgent] Mistral summary received.")
             except Exception as e:
                 print(f"[SummarizationAgent] Mistral Exception: {e}")
-                summary = full_transcript[:100] + ("..." if len(full_transcript) > 100 else f" [Mistral error: {e}]")
+                # Fallback to BART if Mistral unavailable
+                try:
+                    tokenizer, model = get_bart_model()
+                    summary_obj = summarize_with_bart(tokenizer, model, full_transcript, "meeting")
+                    summary = summary_obj.get('summary_text', '')
+                    print("[SummarizationAgent] Fallback BART summary used.")
+                except Exception as e2:
+                    print(f"[SummarizationAgent] Fallback BART Exception: {e2}")
+                    summary = full_transcript[:100] + ("..." if len(full_transcript) > 100 else f" [Mistral/BART error: {e}; {e2}]")
         else:
             print(f"[SummarizationAgent] Unknown or fallback mode: {mode}")
             print("[SummarizationAgent] Entering fallback branch (no model available)")
@@ -219,9 +229,18 @@ class SummarizationAgent(A2AAgent):
         elif use_mistral:
             print("SummarizationAgent: Using local Mistral summarizer")
             print("[INFO] Loading Mistral model, this may take a few moments...")
-            mistral_tokenizer, mistral_model = get_mistral_model()
-            print("[INFO] Mistral model loaded!")
-            summary_obj = summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting_id)
+            try:
+                mistral_tokenizer, mistral_model = get_mistral_model()
+                print("[INFO] Mistral model loaded!")
+                summary_obj = summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting_id)
+            except Exception as e:
+                print(f"[SummarizationAgent] Mistral load failed: {e}\nFalling back to BART summarizer.")
+                try:
+                    tokenizer, model = get_bart_model()
+                    summary_obj = summarize_with_bart(tokenizer, model, transcript, meeting_id)
+                except Exception as b_e:
+                    print(f"[SummarizationAgent] Fallback BART failed: {b_e}")
+                    summary_obj = {'meeting_id': meeting_id, 'summary_text': transcript[:300], 'note': str(b_e)}
 
         else:
             print("SummarizationAgent: No valid summarization method available.")

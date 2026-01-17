@@ -29,23 +29,41 @@ def display_processed_transcripts(processed):
 def display_summaries(summaries):
     if summaries:
         st.subheader("Summaries:")
+        # Render summaries as cards in two columns
+        cols = st.columns(2)
         for i, summary in enumerate(summaries, 1):
-            if isinstance(summary, list):
-                st.markdown(f"**Summary {i}:**")
-                st.markdown("\n".join([f"- {item}" for item in summary]))
-            else:
-                # If summary is a string representation of a list, try to parse and display as bullets
-                import ast
+            col = cols[(i - 1) % 2]
+            with col:
+                st.markdown(f"**Summary {i}**")
+                # If summary is a list, show bullets
+                if isinstance(summary, list):
+                    for s in summary:
+                        st.markdown(f"- {s}")
+                    summary_text = "\n".join(summary)
+                else:
+                    # Try to parse stringified lists
+                    import ast
+                    try:
+                        parsed = ast.literal_eval(summary)
+                        if isinstance(parsed, list):
+                            for s in parsed:
+                                st.markdown(f"- {s}")
+                            summary_text = "\n".join(parsed)
+                        else:
+                            st.markdown(summary)
+                            summary_text = str(summary)
+                    except Exception:
+                        st.markdown(summary)
+                        summary_text = str(summary)
+
+                # Download button for each summary
                 try:
-                    parsed = ast.literal_eval(summary)
-                    if isinstance(parsed, list):
-                        st.markdown(f"**Summary {i}:**")
-                        st.markdown("\n".join([f"- {item}" for item in parsed]))
-                    else:
-                        st.markdown(f"**Summary {i}:**\n{summary}")
+                    safe_name = f"summary_{i}.txt"
+                    st.download_button(label="Download Summary", data=summary_text, file_name=safe_name)
                 except Exception:
-                    st.markdown(f"**Summary {i}:**\n{summary}")
-            st.markdown("&nbsp;")  # Add spacing between summaries
+                    # Streamlit may not support download_button in some versions — ignore
+                    pass
+        st.markdown("&nbsp;")
 
 def display_errors(result):
     if result.get("calendar_error"):
@@ -61,9 +79,26 @@ def display_action_items(action_items):
         # If action_items is a list of dicts, show as table
         if isinstance(action_items, list) and all(isinstance(ai, dict) for ai in action_items):
             st.table(action_items)
+            # Provide download of action items as CSV
+            try:
+                import io, csv
+                buf = io.StringIO()
+                keys = action_items[0].keys() if action_items else []
+                writer = csv.DictWriter(buf, fieldnames=list(keys))
+                writer.writeheader()
+                for row in action_items:
+                    writer.writerow(row)
+                st.download_button("Download Action Items (CSV)", data=buf.getvalue(), file_name="action_items.csv")
+            except Exception:
+                pass
         # If action_items is a list of strings, show as bullets
         elif isinstance(action_items, list):
-            for item in action_items:
-                st.markdown(f"- {item}")
+            for i, item in enumerate(action_items, 1):
+                st.markdown(f"{i}. {item}")
+            try:
+                joined = "\n".join(action_items)
+                st.download_button("Download Action Items (TXT)", data=joined, file_name="action_items.txt")
+            except Exception:
+                pass
         else:
             st.markdown(str(action_items))

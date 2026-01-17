@@ -12,6 +12,8 @@ from mcp.agents.summarization_agent import SummarizationAgent
 from mcp.agents.risk_detection_agent import RiskDetectionAgent
 from mcp.core.a2a_base_agent import A2AMessage, A2ATask, TaskState
 from mcp.agents.notification_agent import NotificationAgent
+from mcp.agents import langchain_tools as lc_tools
+import os
 
 class OrchestratorState:
     def __init__(self):
@@ -37,13 +39,25 @@ class OrchestratorAgent:
         result = {"stage": stage}
         try:
             if stage == "fetch":
-                cal = MCPGoogleCalendar(calendar_id="primary")
+                # Use LangChain calendar tool if enabled
+                use_lc = os.environ.get("USE_LANGCHAIN_TOOLS", "0") == "1"
                 import datetime
                 now = datetime.datetime.utcnow()
                 start_time = now - datetime.timedelta(days=37)
                 end_time = now + datetime.timedelta(days=1)
-                events = cal.fetch_events(start_time, end_time)
-                transcripts = cal.get_transcripts_from_events(events)
+                if use_lc and hasattr(lc_tools, 'fetch_calendar_events_tool'):
+                    try:
+                        res = lc_tools.fetch_calendar_events_tool(user_id=user, date_range=f"{start_time.isoformat()}/{end_time.isoformat()}")
+                        events = res.get('events', [])
+                        transcripts = res.get('transcript', []) if isinstance(res.get('transcript', []), list) else [res.get('transcript', '')]
+                    except Exception:
+                        cal = MCPGoogleCalendar(calendar_id="primary")
+                        events = cal.fetch_events(start_time, end_time)
+                        transcripts = cal.get_transcripts_from_events(events)
+                else:
+                    cal = MCPGoogleCalendar(calendar_id="primary")
+                    events = cal.fetch_events(start_time, end_time)
+                    transcripts = cal.get_transcripts_from_events(events)
                 result['calendar_events'] = events
                 result['calendar_transcripts'] = transcripts
                 result['event_count'] = len(events)
@@ -99,17 +113,30 @@ class OrchestratorAgent:
                     transcripts_to_summarize = processed_transcripts
                 else:
                     transcripts_to_summarize = query.get('processed_transcripts', []) if isinstance(query, dict) else []
-                summarizer = SummarizationAgent(mode=mode)
-                initial_msg = A2AMessage(message_id=str(uuid.uuid4()), role="user")
-                initial_msg.add_part("application/json", {"processed_transcripts": transcripts_to_summarize, "mode": mode})
-                task_id = summarizer.create_task(initial_msg)
-                summary_msg = summarizer.summarize_protocol(processed_transcripts=transcripts_to_summarize, mode=mode)
-                summarizer.update_task(task_id, summary_msg, TaskState.COMPLETED)
+                use_lc = os.environ.get("USE_LANGCHAIN_TOOLS", "0") == "1"
                 summaries = []
-                if hasattr(summary_msg, 'parts'):
-                    for part in summary_msg.parts:
-                        if getattr(part, 'content_type', None) == "text/plain":
-                            summaries.append(part.content)
+                # Prefer calling LangChain summarize tool when enabled
+                if use_lc and hasattr(lc_tools, 'summarize_meeting'):
+                    try:
+                        full_transcript = "\n".join(transcripts_to_summarize)
+                        res = lc_tools.summarize_meeting(full_transcript, mode=mode)
+                        summaries = [res.get('summary', '')]
+                        action_items = res.get('action_items', [])
+                        result['action_items'] = action_items
+                    except Exception as e:
+                        print(f"[WARN] LangChain summarizer failed: {e}")
+                        summaries = []
+                else:
+                    summarizer = SummarizationAgent(mode=mode)
+                    initial_msg = A2AMessage(message_id=str(uuid.uuid4()), role="user")
+                    initial_msg.add_part("application/json", {"processed_transcripts": transcripts_to_summarize, "mode": mode})
+                    task_id = summarizer.create_task(initial_msg)
+                    summary_msg = summarizer.summarize_protocol(processed_transcripts=transcripts_to_summarize, mode=mode)
+                    summarizer.update_task(task_id, summary_msg, TaskState.COMPLETED)
+                    if hasattr(summary_msg, 'parts'):
+                        for part in summary_msg.parts:
+                            if getattr(part, 'content_type', None) == "text/plain":
+                                summaries.append(part.content)
                 result['summaries'] = summaries
                 result['summary_count'] = len(summaries)
                 result['next_actions'] = ["jira", "risk"]
@@ -138,9 +165,19 @@ class OrchestratorAgent:
                 created_tasks = query.get('jira', [{}])[0] if isinstance(query, dict) and 'jira' in query else []
                 summary_for_risk = summaries[0] if summaries else ""
                 tasks_for_risk = created_tasks.get('created_tasks', []) if isinstance(created_tasks, dict) else []
-                progress = {}
-                risk_agent = RiskDetectionAgent()
-                detected_risks = risk_agent.detect(meeting_id=date or "meeting", summary={"summary_text": summary_for_risk}, tasks=tasks_for_risk, progress=progress)
+                # Prefer LangChain risk tool if available
+                use_lc = os.environ.get("USE_LANGCHAIN_TOOLS", "0") == "1"
+                detected_risks = []
+                if use_lc and hasattr(lc_tools, 'detect_risks_tool'):
+                    try:
+                        res = lc_tools.detect_risks_tool(summary=summary_for_risk)
+                        detected_risks = res.get('risks', [])
+                    except Exception as e:
+                        print(f"[WARN] LangChain risk tool failed: {e}")
+                if not detected_risks:
+                    progress = {}
+                    risk_agent = RiskDetectionAgent()
+                    detected_risks = risk_agent.detect(meeting_id=date or "meeting", summary={"summary_text": summary_for_risk}, tasks=tasks_for_risk, progress=progress)
                 result['risk'] = [
                     {"parts": [
                         {"content_type": "application/json", "content": {"detected_risks": detected_risks}}
@@ -156,14 +193,30 @@ class OrchestratorAgent:
                 summary_for_notify = summaries[0] if summaries else ""
                 tasks_for_notify = created_tasks.get('created_tasks', []) if isinstance(created_tasks, dict) else []
                 detected_risks = risks.get('parts', [{}])[0].get('content', {}).get('detected_risks', []) if isinstance(risks, dict) else []
-                notification_agent = NotificationAgent()
-                notification_agent.notify(
-                    meeting_id=date or "meeting",
-                    summary={"summary_text": summary_for_notify},
-                    tasks=tasks_for_notify,
-                    risks=detected_risks
-                )
-                result['notified'] = True
+                use_lc = os.environ.get("USE_LANGCHAIN_TOOLS", "0") == "1"
+                if use_lc and hasattr(lc_tools, 'send_notification_tool'):
+                    try:
+                        lc_tools.send_notification_tool(task=str(tasks_for_notify[:1]), user=user)
+                        result['notified'] = True
+                    except Exception as e:
+                        print(f"[WARN] LangChain notification tool failed: {e}")
+                        notification_agent = NotificationAgent()
+                        notification_agent.notify(
+                            meeting_id=date or "meeting",
+                            summary={"summary_text": summary_for_notify},
+                            tasks=tasks_for_notify,
+                            risks=detected_risks
+                        )
+                        result['notified'] = True
+                else:
+                    notification_agent = NotificationAgent()
+                    notification_agent.notify(
+                        meeting_id=date or "meeting",
+                        summary={"summary_text": summary_for_notify},
+                        tasks=tasks_for_notify,
+                        risks=detected_risks
+                    )
+                    result['notified'] = True
                 result['next_actions'] = []
                 return result
 

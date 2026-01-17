@@ -62,8 +62,8 @@ def render_orchestrator_message(content):
                         'Description': ev.get('description', '')[:100] + ('...' if len(ev.get('description', '')) > 100 else '')
                     })
                 st.table(event_rows)
-            else:
-                st.info("No events found.")
+            # else:
+            #     st.info("No events found.")
             return
     except Exception:
         pass
@@ -94,37 +94,19 @@ if result:
         st.markdown("**Event & Transcript Overview**")
         st.metric("Event Count", len(events))
         st.metric("Transcript Count", len(transcripts))
-        selected_indices = event_selector(events, transcripts)
-        with st.form("process_form"):
-            process_submitted = st.form_submit_button("Process Selected Events")
-        if process_submitted:
-            st.info(f"[DEBUG] Selected indices: {selected_indices}")
-            payload = {
-                "query": "process_selected_events",
-                "selected_event_indices": selected_indices,
-                "mode": mode
-            }
-            st.info(f"[DEBUG] Payload: {payload}")
-            with st.spinner("Processing selected events..."):
-                try:
-                    st.info(f"[DEBUG] Sending request to API_URL: {API_URL}")
-                    import socket
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    result_port = sock.connect_ex(('localhost', 8000))
-                    st.info(f"[DEBUG] Port 8000 status: {'open' if result_port == 0 else 'closed'}")
-                    sock.close()
-                    response = requests.post(API_URL, json=payload)
-                    st.info(f"[DEBUG] Response status: {response.status_code}")
-                    st.info(f"[DEBUG] Response text: {response.text}")
-                    if response.status_code == 200:
-                        result = response.json()
-                        st.info(f"[DEBUG] Result: {result}")
-                        st.session_state['last_result'] = result
-                        st.success("Selected events processed.")
-                    else:
-                        st.error(f"API Error: {response.status_code} {response.text}")
-                except Exception as e:
-                    st.error(f"Request failed: {e}")
+        # Allow selecting events and processing selected ones
+        st.markdown("Select events to process below:")
+        if 'events' in st.session_state:
+            session_events = st.session_state['events']
+            session_transcripts = st.session_state.get('transcripts', [])
+        else:
+            session_events = events
+            session_transcripts = transcripts
+        selected_indices = event_selector(session_events, session_transcripts)
+        if st.button("Process Selected Events"):
+            payload = {"query": "process_selected_events", "selected_event_indices": selected_indices, "mode": mode}
+            send_query(payload)
+            st.experimental_rerun()
 
     with st.expander("Processed Transcripts"):
         processed = result.get("processed_transcripts", [])
@@ -151,48 +133,29 @@ if result:
     with st.expander("Errors & Debug Info"):
         display_errors(result)
 else:
-    st.info("No events available to display. Please try fetching again or check your data source.")
-    with st.expander("Raw Backend Response for Debugging"):
-        st.code(json.dumps(result, indent=2), language="json")
+    pass
 
 # Additional section for summarizing processed events
 if result and "processed_transcripts" in result:
-    print("[DEBUG] Processed transcripts available for summarization.")
-    with st.expander("Summarize Processed Events", expanded=True):
-        with st.form("summarize_form"):
-            summarize_submitted = st.form_submit_button("Summarize Processed Events")
-        if summarize_submitted:
-            processed_transcripts = result.get("processed_transcripts", [])
-            st.info(f"[DEBUG] Summarize button clicked. Processed transcripts: {processed_transcripts}")
-            payload = {
-                "query": "summarize_processed_transcripts",
-                "processed_transcripts": processed_transcripts,
-                "mode": mode
-            }
-            st.info(f"[DEBUG] Summarize payload: {payload}")
-            with st.spinner("Summarizing processed events..."):
-                try:
-                    response = requests.post(API_URL, json=payload)
-                    st.info(f"[DEBUG] Summarize response status: {response.status_code}")
-                    st.info(f"[DEBUG] Summarize response text: {response.text}")
-                    if response.status_code == 200:
-                        result = response.json()
-                        st.info(f"[DEBUG] Summarize result: {result}")
-                        st.session_state['last_result'] = result
-                        st.success("Summarization complete.")
-                    else:
-                        st.error(f"Summarization failed: {response.status_code} {response.text}")
-                except Exception as e:
-                    st.error(f"Summarization request failed: {e}")
+    # No summarize button; instruct user to type in chat
 
     # Show summaries clearly after summarization
     if result.get("summaries"):
-        st.markdown("## Summaries")
+        st.markdown("## Summaries & Action Items")
         summaries = result.get("summaries", [])
-        if isinstance(summaries, str):
-            display_summaries([summaries])
-        else:
-            display_summaries(summaries)
+        action_items = result.get("action_items", [])
+        cols = st.columns([2, 1])
+        with cols[0]:
+            st.markdown("### Summary")
+            if isinstance(summaries, str):
+                display_summaries([summaries])
+            else:
+                display_summaries(summaries)
+        with cols[1]:
+            st.markdown("### Action Items")
+            if action_items:
+                from mcp.ui.orchestrator_ui_components import display_action_items
+                display_action_items(action_items)
 
     # Show action items clearly after summarization
     if result.get("action_items"):
@@ -203,20 +166,9 @@ if result and "processed_transcripts" in result:
 
 # Move chat input and Send button to the bottom
 st.markdown("---")
-st.markdown("### Type your message and press Enter")
-chat_input = st.text_input(
-    "Type your message and press Enter",
-    key="chat_input",
-    value="" if st.session_state.get("clear_input", False) else st.session_state.get("chat_input", "")
-)
-send_clicked = st.button("Send", key="send_btn")
 
-if send_clicked and chat_input:
-    st.session_state["chat_history"].append({"role": "user", "content": chat_input})
-    payload = {
-        "query": chat_input,
-        "mode": mode
-    }
+# Helper to send queries to the backend and update session state
+def send_query(payload):
     with st.spinner("Processing your request..."):
         try:
             response = requests.post(API_URL, json=payload)
@@ -224,16 +176,80 @@ if send_clicked and chat_input:
                 result = response.json()
                 st.session_state["chat_history"].append({"role": "orchestrator", "content": result})
                 st.session_state['last_result'] = result
-                st.session_state["_last_chat_input"] = chat_input
-                st.session_state["clear_input"] = True
-                st.rerun()
+                # Cache events/transcripts for UI selections
+                if isinstance(result, dict) and result.get('calendar_events'):
+                    st.session_state['events'] = result.get('calendar_events', [])
+                if isinstance(result, dict) and result.get('calendar_transcripts'):
+                    st.session_state['transcripts'] = result.get('calendar_transcripts', [])
             else:
                 st.session_state["chat_history"].append({"role": "orchestrator", "content": f"API Error: {response.status_code} {response.text}"})
         except Exception as e:
             st.session_state["chat_history"].append({"role": "orchestrator", "content": f"Request failed: {e}"})
-        st.session_state["_last_chat_input"] = chat_input
-        st.session_state["clear_input"] = True
-        st.rerun()
+
+
+# Sidebar quick-action toolbar
+st.sidebar.markdown("### Quick Actions")
+if st.sidebar.button("Fetch Events"):
+    st.session_state["chat_history"].append({"role": "user", "content": "Fetch my recent events"})
+    payload = {"query": "fetch recent events", "mode": mode}
+    send_query(payload)
+    st.experimental_rerun()
+
+if st.sidebar.button("Summarize Events"):
+    st.session_state["chat_history"].append({"role": "user", "content": "Summarize selected events"})
+    payload = {"query": "summarize selected events", "mode": mode}
+    send_query(payload)
+    st.experimental_rerun()
+
+if st.sidebar.button("Detect Risks"):
+    st.session_state["chat_history"].append({"role": "user", "content": "Detect risks in last summary"})
+    payload = {"query": "detect risks", "mode": mode}
+    send_query(payload)
+    st.experimental_rerun()
+
+if st.sidebar.button("Extract Tasks"):
+    st.session_state["chat_history"].append({"role": "user", "content": "Extract tasks from last summary"})
+    payload = {"query": "extract tasks", "mode": mode}
+    send_query(payload)
+    st.experimental_rerun()
+
+if st.sidebar.button("Create Jira"):
+    st.session_state["chat_history"].append({"role": "user", "content": "Create Jira from action items"})
+    payload = {"query": "create jira from action items", "mode": mode}
+    send_query(payload)
+    st.experimental_rerun()
+
+
+# Chat input (uses chat_input if available, falls back to text_input)
+try:
+    chat_input = st.chat_input("Type your message and press Enter", key="chat_input")
+except Exception:
+    chat_input = st.text_input(
+        "Type your message and press Enter",
+        key="chat_input_fallback",
+        value="" if st.session_state.get("clear_input", False) else st.session_state.get("chat_input", "")
+    )
+
+if chat_input:
+    st.session_state["chat_history"].append({"role": "user", "content": chat_input})
+    payload = {"query": chat_input, "mode": mode}
+    # Special-case quick responses for action-words to show cached results first
+    if any(word in chat_input.lower() for word in ["task", "action item", "action items", "tasks"]):
+        last_result = st.session_state.get('last_result', {})
+        action_items = last_result.get("action_items", [])
+        if action_items:
+            from mcp.ui.orchestrator_ui_components import display_action_items
+            st.markdown("**Orchestrator:** Here are the action items from the last summary:")
+            display_action_items(action_items)
+            st.session_state["clear_input"] = True
+        else:
+            send_query(payload)
+    else:
+        send_query(payload)
+    st.session_state["_last_chat_input"] = chat_input
+    st.session_state["clear_input"] = True
+    st.experimental_rerun()
+
 elif st.session_state.get("clear_input"):
     st.session_state["clear_input"] = False
 
