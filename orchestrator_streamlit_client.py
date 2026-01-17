@@ -30,6 +30,32 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Compatibility helper for Streamlit rerun across versions
+def safe_rerun():
+    """Try to rerun the Streamlit script in a version-compatible way.
+
+    Falls back to a no-op if rerun is not available in the environment.
+    """
+    try:
+        if hasattr(st, "experimental_rerun"):
+            # Only call if not this function itself (avoid recursion)
+            if st.experimental_rerun != safe_rerun:
+                st.experimental_rerun()
+                return
+    except Exception:
+        pass
+    # Try raising the runtime RerunException for newer Streamlit internals
+    try:
+        # streamlit runtime import path differs across versions
+        from streamlit.runtime.scriptrunner import RerunException
+        raise RerunException()
+    except Exception:
+        try:
+            from streamlit.web import cli as stcli  # type: ignore
+            return
+        except Exception:
+            return
+
 # Sidebar: All options
 with st.sidebar:
     st.header("Options")
@@ -117,7 +143,7 @@ if result:
         if st.button("Process Selected Events"):
             payload = {"query": "process_selected_events", "selected_event_indices": selected_indices, "mode": mode}
             send_query(payload)
-            st.experimental_rerun()
+            safe_rerun()
 
     with st.expander("Processed Transcripts"):
         processed = result.get("processed_transcripts", [])
@@ -204,31 +230,31 @@ if st.sidebar.button("Fetch Events"):
     st.session_state["chat_history"].append({"role": "user", "content": "Fetch my recent events"})
     payload = {"query": "fetch recent events", "mode": mode}
     send_query(payload)
-    st.experimental_rerun()
+    safe_rerun()
 
 if st.sidebar.button("Summarize Events"):
     st.session_state["chat_history"].append({"role": "user", "content": "Summarize selected events"})
     payload = {"query": "summarize selected events", "mode": mode}
     send_query(payload)
-    st.experimental_rerun()
+    safe_rerun()
 
 if st.sidebar.button("Detect Risks"):
     st.session_state["chat_history"].append({"role": "user", "content": "Detect risks in last summary"})
     payload = {"query": "detect risks", "mode": mode}
     send_query(payload)
-    st.experimental_rerun()
+    safe_rerun()
 
 if st.sidebar.button("Extract Tasks"):
     st.session_state["chat_history"].append({"role": "user", "content": "Extract tasks from last summary"})
     payload = {"query": "extract tasks", "mode": mode}
     send_query(payload)
-    st.experimental_rerun()
+    safe_rerun()
 
 if st.sidebar.button("Create Jira"):
     st.session_state["chat_history"].append({"role": "user", "content": "Create Jira from action items"})
     payload = {"query": "create jira from action items", "mode": mode}
     send_query(payload)
-    st.experimental_rerun()
+    safe_rerun()
 
 
 # Chat input (uses chat_input if available, falls back to text_input)
@@ -259,7 +285,7 @@ if chat_input:
         send_query(payload)
     st.session_state["_last_chat_input"] = chat_input
     st.session_state["clear_input"] = True
-    st.experimental_rerun()
+    safe_rerun()
 
 elif st.session_state.get("clear_input"):
     st.session_state["clear_input"] = False
