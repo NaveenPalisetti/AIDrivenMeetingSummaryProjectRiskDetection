@@ -314,7 +314,7 @@ def parse_create_jira_command(text, action_items):
         idx = int(match_num.group(1)) - 1
         if 0 <= idx < len(action_items):
             item = action_items[idx]
-            print(f"[DEBUG] parse_create_jira_command returning: {[item]}")
+            #print(f"[DEBUG] parse_create_jira_command returning: {[item]}")
             return [item]  # Return full dict for mapping
     match_kw = re.search(r"create jira for action item containing ['\"]?([\w\s]+)['\"]?", text.lower())
     if match_kw and action_items:
@@ -325,9 +325,9 @@ def parse_create_jira_command(text, action_items):
             if keyword in item_str.lower():
                 filtered.append(item)
         if filtered:
-            print(f"[DEBUG] parse_create_jira_command returning: {filtered}")
+            #print(f"[DEBUG] parse_create_jira_command returning: {filtered}")
             return filtered
-    print("[DEBUG] parse_create_jira_command returning: None")
+    #print("[DEBUG] parse_create_jira_command returning: None")
     return None
 
 def parse_process_event_command(text):
@@ -354,64 +354,62 @@ if chat_input:
     # Get action items from last_result if available
     action_items = []
     if 'last_result' in st.session_state and isinstance(st.session_state['last_result'], dict):
-        print(f"[DEBUG] st.session_state['last_result'] before Jira command: {st.session_state['last_result']}")
+        #print(f"[DEBUG] st.session_state['last_result'] before Jira command: {st.session_state['last_result']}")
         action_items = st.session_state['last_result'].get('action_items', [])
-        print(f"[DEBUG] action_items from last_result: {action_items}")
+        #print(f"[DEBUG] action_items from last_result: {action_items}")
         summaries_dbg = st.session_state['last_result'].get('summaries', [])
-        print(f"[DEBUG] summaries from last_result: {summaries_dbg}")
+        #print(f"[DEBUG] summaries from last_result: {summaries_dbg}")
     clean_chat_input = chat_input.strip()
     selected_action_items = parse_create_jira_command(clean_chat_input, action_items)
-    print(f"[DEBUG] selected_action_items after parse_create_jira_command: {selected_action_items}")
-    if 'create jira' in clean_chat_input.lower():
-        print(f"[DEBUG] Preparing to send Jira payload. action_items: {action_items}, selected_action_items: {selected_action_items}")
+    #print(f"[DEBUG] selected_action_items after parse_create_jira_command: {selected_action_items}")
     if summarize_bart or summarize_mistral:
         model = "BART" if summarize_bart else "Mistral"
         processed_transcripts = st.session_state.get('processed_transcripts', [])
         payload = {"query": f"summarize events", "mode": mode, "model": model}
         if processed_transcripts:
             payload["processed_transcripts"] = processed_transcripts
-        print(f"[DEBUG] Sending summarize payload: {payload}")
+        #print(f"[DEBUG] Sending summarize payload: {payload}")
         last_result = _call_and_update(payload, chat_history, timeout=180)
         # Only update the 'last_result' key in session state
         st.session_state['last_result'] = last_result
     elif process_idx is not None and events and 0 <= process_idx < len(events):
         event = events[process_idx]
         event_id = event.get('id')
-        print(f"[DEBUG] Processing event index: {process_idx}, event_id: {event_id}")
+        #print(f"[DEBUG] Processing event index: {process_idx}, event_id: {event_id}")
         if event_id:
             payload = {"query": f"process event {event_id}", "mode": mode}
-            print(f"[DEBUG] Sending process event payload: {payload}")
+            #print(f"[DEBUG] Sending process event payload: {payload}")
             last_result = _call_and_update(payload, chat_history, timeout=180)
     elif selected_action_items:
         # User requested to create Jira for specific action items
         # Send the actual user command in the query field, but always include selected_action_items (full dict)
         payload = {"query": chat_input, "mode": mode, "selected_action_items": selected_action_items}
-        print(f"[DEBUG] Sending payload to orchestrator API: {payload}")
-        print(f"[DEBUG] st.session_state['last_result'] at payload send: {st.session_state.get('last_result')}")
+        #print(f"[DEBUG] Sending payload to orchestrator API: {payload}")
+        #print(f"[DEBUG] st.session_state['last_result'] at payload send: {st.session_state.get('last_result')}")
         last_result = _call_and_update(payload, chat_history, timeout=180)
     else:
         payload = {"query": chat_input, "mode": mode}
-        print(f"[DEBUG] Sending generic payload: {payload}")
+        #print(f"[DEBUG] Sending generic payload: {payload}")
         last_result = _call_and_update(payload, chat_history, timeout=180)
     # Extract events, transcripts, and processed_transcripts if present
     if last_result:
-        print(f"[DEBUG] last_result after API call: {last_result}")
+        #print(f"[DEBUG] last_result after API call: {last_result}")
         if isinstance(last_result, dict):
             if 'calendar_events' in last_result:
                 events = last_result.get('calendar_events', [])
-                print(f"[DEBUG] calendar_events extracted: {events}")
+                #print(f"[DEBUG] calendar_events extracted: {events}")
             elif 'events' in last_result:
                 events = last_result.get('events', [])
-                print(f"[DEBUG] events extracted: {events}")
+                #print(f"[DEBUG] events extracted: {events}")
             if 'calendar_transcripts' in last_result:
                 transcripts = last_result.get('calendar_transcripts', [])
-                print(f"[DEBUG] calendar_transcripts extracted: {transcripts}")
+                #print(f"[DEBUG] calendar_transcripts extracted: {transcripts}")
             elif 'transcripts' in last_result:
                 transcripts = last_result.get('transcripts', [])
-                print(f"[DEBUG] transcripts extracted: {transcripts}")
+                #print(f"[DEBUG] transcripts extracted: {transcripts}")
             if 'processed_transcripts' in last_result and last_result['processed_transcripts']:
                 st.session_state['processed_transcripts'] = last_result['processed_transcripts']
-                print(f"[DEBUG] processed_transcripts updated in session_state: {last_result['processed_transcripts']}")
+                #print(f"[DEBUG] processed_transcripts updated in session_state: {last_result['processed_transcripts']}")
 else:
     # On first load, just show welcome and empty state
     last_result = None

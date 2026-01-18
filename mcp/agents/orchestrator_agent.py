@@ -332,6 +332,7 @@ class OrchestratorAgent:
                 print(f"[DEBUG] Jira message: {jira_msg}")
                 jira_task_id = jira_agent.create_task(jira_msg)
                 print(f"[DEBUG] Jira task id: {jira_task_id}")
+                print(f"[DEBUG] Creating Jira issues.summaries={summaries}, user={user}, date={date}")
                 jira_response_msg = jira_agent.create_jira(summaries, user=user, date=date)
                 print(f"[DEBUG] Jira response message: {jira_response_msg}")
                 jira_agent.update_task(jira_task_id, jira_response_msg, TaskState.COMPLETED)
