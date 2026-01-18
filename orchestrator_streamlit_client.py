@@ -59,8 +59,8 @@ def get_dynamic_suggestions(chat_history, last_result, events):
                 if keyword_match:
                     kw = keyword_match.group(0).lower()
                     suggestions.append(f"create jira for action item containing '{kw}'")
-    # Always suggest help
-    suggestions.append("help")
+    # Suggest usage instructions instead of generic help
+    suggestions.append("Show usage instructions")
     return suggestions
 
 st.set_page_config(page_title="AI Orchestrator Client", layout="wide")
@@ -124,7 +124,12 @@ with st.sidebar:
             st.markdown(f"- {s}")
     st.markdown("---")
     st.header("🕑 History")
-    for entry in results_history:
+    # Add Clear History button
+    if st.button("Clear History"):
+        st.session_state['results_history'] = []
+        results_history = []
+    # Show only the last 10 entries
+    for entry in results_history[-10:]:
         if entry['user']:
             st.markdown(f"**You:** {entry['user']}")
         if entry['result']:
@@ -169,11 +174,16 @@ def _call_and_update(payload, chat_history, timeout=90):
 import json
 def render_orchestrator_message(content):
     try:
-        # If content is a dict, only show user-friendly messages for known stages
+        # Always try to parse string content to dict for consistent handling
+        if isinstance(content, str) and content.strip().startswith('{'):
+            try:
+                content = json.loads(content.replace("'", '"'))
+            except Exception:
+                pass
         if isinstance(content, dict):
             result = content
         else:
-            result = json.loads(content.replace("'", '"')) if isinstance(content, str) and content.strip().startswith('{') else None
+            result = None
         if result and isinstance(result, dict):
             if result.get('stage') == 'fetch' and 'calendar_events' in result:
                 st.markdown(f"**Orchestrator:** Found {len(result.get('calendar_events', []))} recent meeting events. Use the table below to view details.")
@@ -206,6 +216,7 @@ def render_orchestrator_message(content):
         st.markdown(f"**Orchestrator:** {content}")
 
 # Render the full conversation and results history
+#st.write("[DEBUG] Rendering results history...", results_history)
 for entry in results_history:
     if entry['user']:
         st.markdown(f"**You:** {entry['user']}")
@@ -276,6 +287,7 @@ for entry in results_history:
                     st.write(result['risk_task_state'])
                 st.json(result['risk'])
     # Show errors if present
+    print("[DEBUG] Checking for errors to display...",isinstance(result, dict))
     if isinstance(result, dict):
         with st.expander("Errors & Debug Info"):
             display_errors(result)
@@ -363,55 +375,69 @@ if chat_input:
     clean_chat_input = chat_input.strip()
     selected_action_items = parse_create_jira_command(clean_chat_input, action_items)
     #print(f"[DEBUG] selected_action_items after parse_create_jira_command: {selected_action_items}")
+    # Show help/usage instructions if user types 'help' or similar
+    if clean_chat_input.lower() in ["help", "show usage instructions", "usage", "instructions"]:
+        st.info("""
+**How to use the AI Orchestrator Client:**
+
+- **fetch events**: Retrieve your recent meeting events from the connected calendar.
+- **summarize events with BART/Mistral**: Get a summary and action items for your meetings using the selected model.
+- **detect risks**: Analyze meeting summaries for project risks.
+- **extract tasks**: Extract actionable tasks from meeting transcripts.
+- **create jira from action items**: Create Jira tickets for detected action items.
+- **process the Nth event**: Process a specific event by its order in the list.
+- **create jira for action item 1**: Create a Jira ticket for a specific action item.
+- **create jira for action item containing 'keyword'**: Create a Jira ticket for an action item matching a keyword.
+
+You can also interact conversationally, e.g.:
+- "Summarize events with Mistral"
+- "Detect risks in the last meeting"
+- "Create Jira for action item containing 'API'"
+
+Use the sidebar for suggestions and history. Use the 'Clear History' button to reset your session.
+        """)
+        # Do not process further if help was requested
+        st.stop()
     if summarize_bart or summarize_mistral:
         model = "BART" if summarize_bart else "Mistral"
         processed_transcripts = st.session_state.get('processed_transcripts', [])
-        # Always set mode to the selected model for backend
         payload = {"query": f"summarize events", "mode": model, "model": model}
         if processed_transcripts:
             payload["processed_transcripts"] = processed_transcripts
-        #print(f"[DEBUG] Sending summarize payload: {payload}")
         timeout_val = 3000 if model == "Mistral" else 90
         last_result = _call_and_update(payload, chat_history, timeout=timeout_val)
         st.session_state['last_result'] = last_result
     elif process_idx is not None and events and 0 <= process_idx < len(events):
         event = events[process_idx]
         event_id = event.get('id')
-        #print(f"[DEBUG] Processing event index: {process_idx}, event_id: {event_id}")
         if event_id:
             payload = {"query": f"process event {event_id}", "mode": mode}
-            #print(f"[DEBUG] Sending process event payload: {payload}")
             last_result = _call_and_update(payload, chat_history, timeout=180)
     elif selected_action_items:
-        # User requested to create Jira for specific action items
-        # Send the actual user command in the query field, but always include selected_action_items (full dict)
         payload = {"query": chat_input, "mode": mode, "selected_action_items": selected_action_items}
-        #print(f"[DEBUG] Sending payload to orchestrator API: {payload}")
-        #print(f"[DEBUG] st.session_state['last_result'] at payload send: {st.session_state.get('last_result')}")
         last_result = _call_and_update(payload, chat_history, timeout=180)
     else:
         payload = {"query": chat_input, "mode": mode}
-        #print(f"[DEBUG] Sending generic payload: {payload}")
         last_result = _call_and_update(payload, chat_history, timeout=180)
     # Extract events, transcripts, and processed_transcripts if present
     if last_result:
-        #print(f"[DEBUG] last_result after API call: {last_result}")
         if isinstance(last_result, dict):
             if 'calendar_events' in last_result:
                 events = last_result.get('calendar_events', [])
-                #print(f"[DEBUG] calendar_events extracted: {events}")
             elif 'events' in last_result:
                 events = last_result.get('events', [])
-                #print(f"[DEBUG] events extracted: {events}")
             if 'calendar_transcripts' in last_result:
                 transcripts = last_result.get('calendar_transcripts', [])
-                #print(f"[DEBUG] calendar_transcripts extracted: {transcripts}")
             elif 'transcripts' in last_result:
                 transcripts = last_result.get('transcripts', [])
-                #print(f"[DEBUG] transcripts extracted: {transcripts}")
             if 'processed_transcripts' in last_result and last_result['processed_transcripts']:
                 st.session_state['processed_transcripts'] = last_result['processed_transcripts']
-                #print(f"[DEBUG] processed_transcripts updated in session_state: {last_result['processed_transcripts']}")
+        # Append to results_history for sidebar/history display
+        st.session_state['results_history'].append({
+            "user": chat_input,
+            "result": last_result,
+            "events": events if 'events' in locals() else []
+        })
 else:
     # On first load, just show welcome and empty state
     last_result = None
