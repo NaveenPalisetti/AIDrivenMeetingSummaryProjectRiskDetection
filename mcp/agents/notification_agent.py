@@ -21,6 +21,7 @@ class NotificationAgent:
 		print('=== Notification ===')
 		print(json.dumps(payload, indent=2))
 		if self.slack_webhook and requests:
+			print('Sending Slack notification...')
 			try:
 				requests.post(self.slack_webhook, json={'text': f"Meeting {meeting_id} summary: {payload['summary']}"})
 			except Exception as e:

@@ -391,10 +391,23 @@ class OrchestratorAgent:
                     progress = {}
                     risk_agent = RiskDetectionAgent()
                     detected_risks = risk_agent.detect(meeting_id=date or "meeting", summary={"summary_text": summary_for_risk}, tasks=tasks_for_risk, progress=progress)
-                print(f"[DEBUG] Detected risks: {detected_risks}")
+
+                # --- Jira-based risk detection ---
+                try:
+                    # Import inside the function to avoid circular import
+                    from mcp.agents.task_manager_agent import TaskManagerAgent
+                    tm_agent = TaskManagerAgent()
+                    jira_risks = tm_agent.detect_jira_risks()
+                    print(f"[DEBUG] Jira-based risks: {jira_risks}")
+                except Exception as e:
+                    print(f"[WARN] Jira-based risk detection failed: {e}")
+                    jira_risks = []
+
+                # Combine both types of risks
                 result['risk'] = [
                     {"parts": [
-                        {"content_type": "application/json", "content": {"detected_risks": detected_risks}}
+                        {"content_type": "application/json", "content": {"detected_risks": detected_risks}},
+                        {"content_type": "application/json", "content": {"jira_risks": jira_risks}}
                     ]}
                 ]
                 result['next_actions'] = ["notify"]

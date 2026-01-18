@@ -30,6 +30,94 @@ except ImportError:
 
 
 class TaskManagerAgent(A2AAgent):
+
+	def detect_jira_risks(self, days_overdue=0, days_stale=7):
+		"""
+		Detect risks from Jira issues: overdue, unassigned, blocked, no due date, stale, high priority unresolved.
+		Returns a list of risk dicts.
+		"""
+		risks = []
+		if not self.jira:
+			return risks
+		from datetime import datetime, timedelta
+		now = datetime.utcnow()
+		# 1. Overdue tasks
+		try:
+			jql_overdue = f'project={self.jira_project} AND duedate <= now() AND statusCategory != Done'
+			for issue in self.jira.search_issues(jql_overdue):
+				risks.append({
+					'type': 'overdue',
+					'key': issue.key,
+					'summary': issue.fields.summary,
+					'due_date': getattr(issue.fields, 'duedate', None),
+					'description': 'Task is overdue.'
+				})
+		except Exception as e:
+			print(f"[TaskManagerAgent] Error fetching overdue tasks: {e}")
+		# 2. Unassigned tasks
+		try:
+			jql_unassigned = f'project={self.jira_project} AND assignee is EMPTY AND statusCategory != Done'
+			for issue in self.jira.search_issues(jql_unassigned):
+				risks.append({
+					'type': 'unassigned',
+					'key': issue.key,
+					'summary': issue.fields.summary,
+					'description': 'Task is unassigned.'
+				})
+		except Exception as e:
+			print(f"[TaskManagerAgent] Error fetching unassigned tasks: {e}")
+		# 3. Blocked/flagged issues (if using Jira Software flags)
+		try:
+			jql_blocked = f'project={self.jira_project} AND (flagged = Impediment OR status = Blocked) AND statusCategory != Done'
+			for issue in self.jira.search_issues(jql_blocked):
+				risks.append({
+					'type': 'blocked',
+					'key': issue.key,
+					'summary': issue.fields.summary,
+					'description': 'Task is blocked or flagged.'
+				})
+		except Exception as e:
+			print(f"[TaskManagerAgent] Error fetching blocked tasks: {e}")
+		# 4. No due date
+		try:
+			jql_nodue = f'project={self.jira_project} AND duedate is EMPTY AND statusCategory != Done'
+			for issue in self.jira.search_issues(jql_nodue):
+				risks.append({
+					'type': 'no_due_date',
+					'key': issue.key,
+					'summary': issue.fields.summary,
+					'description': 'Task has no due date.'
+				})
+		except Exception as e:
+			print(f"[TaskManagerAgent] Error fetching no due date tasks: {e}")
+		# 5. Stale tasks (not updated in days_stale)
+		try:
+			stale_date = (now - timedelta(days=days_stale)).strftime('%Y-%m-%d')
+			jql_stale = f'project={self.jira_project} AND updated <= "{stale_date}" AND statusCategory != Done'
+			for issue in self.jira.search_issues(jql_stale):
+				risks.append({
+					'type': 'stale',
+					'key': issue.key,
+					'summary': issue.fields.summary,
+					'last_updated': getattr(issue.fields, 'updated', None),
+					'description': f'Task not updated in {days_stale}+ days.'
+				})
+		except Exception as e:
+			print(f"[TaskManagerAgent] Error fetching stale tasks: {e}")
+		# 6. High priority unresolved
+		try:
+			jql_highprio = f'project={self.jira_project} AND priority = Highest AND statusCategory != Done'
+			for issue in self.jira.search_issues(jql_highprio):
+				risks.append({
+					'type': 'high_priority',
+					'key': issue.key,
+					'summary': issue.fields.summary,
+					'priority': getattr(issue.fields, 'priority', None),
+					'description': 'High priority task unresolved.'
+				})
+		except Exception as e:
+			print(f"[TaskManagerAgent] Error fetching high priority tasks: {e}")
+		return risks
 	def __init__(self):
 		agent_card = AgentCard(
 			agent_id="task-manager-agent",

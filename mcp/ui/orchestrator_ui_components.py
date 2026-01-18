@@ -1,3 +1,28 @@
+def display_risks(risks):
+    """
+    Display detected risks in a user-friendly way, with severity-based color coding.
+    Accepts a list of risk dicts or a single dict.
+    """
+    import streamlit as st
+    if not risks:
+        st.info("No risks detected.")
+        return
+    if isinstance(risks, dict):
+        risks = [risks]
+    st.subheader("Detected Risks")
+    for risk in risks:
+        desc = risk.get('description', str(risk))
+        sev = (risk.get('severity', '') or '').lower()
+        mid = risk.get('meeting_id', None)
+        msg = f"**Severity:** {sev.capitalize()}\n**Description:** {desc}"
+        if mid:
+            msg += f"\n**Meeting ID:** {mid}"
+        if sev == 'high':
+            st.error(msg)
+        elif sev == 'medium':
+            st.warning(msg)
+        else:
+            st.info(msg)
 """
 Reusable Streamlit UI components for the Orchestrator Client
 """

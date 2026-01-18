@@ -370,7 +370,7 @@ if chat_input:
         payload = {"query": f"summarize events", "mode": model, "model": model}
         if processed_transcripts:
             payload["processed_transcripts"] = processed_transcripts
-        print(f"[DEBUG] Sending summarize payload: {payload}")
+        #print(f"[DEBUG] Sending summarize payload: {payload}")
         last_result = _call_and_update(payload, chat_history, timeout=180)
         st.session_state['last_result'] = last_result
     elif process_idx is not None and events and 0 <= process_idx < len(events):
@@ -483,12 +483,11 @@ if last_result:
             elif isinstance(risk_obj, dict):
                 if 'detected_risks' in risk_obj:
                     detected_risks = risk_obj['detected_risks']
+            from mcp.ui.orchestrator_ui_components import display_risks
             if detected_risks:
-                st.markdown("### Detected Risks")
-                for risk in detected_risks:
-                    st.warning(risk)
+                display_risks(detected_risks)
             else:
-                st.json(risk_obj)
+                st.info("No risks detected.")
     with st.expander("Errors & Debug Info"):
         display_errors(last_result)
 
