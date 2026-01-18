@@ -14,11 +14,58 @@ def event_selector(events, transcripts):
     return selected_indices
 
 def display_event_details(events, transcripts, selected_indices):
-    st.subheader("Selected Event Details:")
+    st.subheader("Selected Event Details")
     for idx in selected_indices:
-        st.markdown(f"**Event {idx+1}:**")
-        st.json(events[idx])
-        st.markdown(f"**Transcript:**\n{transcripts[idx]}")
+        ev = events[idx]
+        transcript = transcripts[idx] if idx < len(transcripts) else ""
+        summary = ev.get('summary', ev.get('title', f'Event {idx+1}'))
+        start = ev.get('start', {}).get('dateTime') or ev.get('start', {}).get('date', '')
+        end = ev.get('end', {}).get('dateTime') or ev.get('end', {}).get('date', '')
+        organizer = ev.get('organizer', {}).get('email') if isinstance(ev.get('organizer'), dict) else ev.get('organizer', '')
+        attendees = ev.get('attendees', [])
+        description = ev.get('description', '')
+
+        st.markdown(f"**Event {idx+1}: {summary}**")
+        cols = st.columns([2, 1])
+        with cols[0]:
+            st.markdown(f"**Summary:** {summary}")
+            if start:
+                st.markdown(f"**Start:** {start}")
+            if end:
+                st.markdown(f"**End:** {end}")
+            if organizer:
+                st.markdown(f"**Organizer:** {organizer}")
+            if attendees:
+                st.markdown("**Attendees:**")
+                for a in attendees:
+                    email = a.get('email', '')
+                    name = a.get('displayName') if a.get('displayName') else email
+                    role = ' (self)' if a.get('self') else ''
+                    st.markdown(f"- {name} <{email}>{role}")
+                if description:
+                    st.markdown("**Description:**")
+                    desc_snippet = description if len(description) <= 400 else description[:400] + '...'
+                    st.write(desc_snippet)
+                    if len(description) > 400:
+                        with st.expander("Show full description"):
+                            st.write(description)
+        with cols[1]:
+            st.markdown("**Transcript**")
+            if transcript:
+                # show a snippet and provide expander for full transcript to avoid UI clutter
+                transcript_snippet = transcript if len(transcript) <= 1000 else transcript[:1000] + '...'
+                st.write(transcript_snippet)
+                try:
+                    st.download_button(label="Download Transcript", data=transcript, file_name=f"transcript_event_{idx+1}.txt")
+                except Exception:
+                    pass
+                if len(transcript) > 1000:
+                    with st.expander("Show full transcript"):
+                        st.write(transcript)
+            else:
+                st.info("No transcript available for this event.")
+            with st.expander("Show raw event JSON"):
+                st.json(ev)
 
 def display_processed_transcripts(processed):
     if processed:
@@ -102,3 +149,70 @@ def display_action_items(action_items):
                 pass
         else:
             st.markdown(str(action_items))
+
+
+def get_suggested_commands(chat_history, last_result=None):
+    """Return a list of suggested command strings based on recent chat history and last_result.
+
+    Heuristics:
+    - If the last user message mentions fetching/calendar, suggest fetching and preprocessing.
+    - If the last user message mentions summarize/summary, suggest summarize/extract tasks/detect risks.
+    - If last_result contains processed transcripts but not summaries, always suggest 'summarize selected events'.
+    - If last_result contains summaries, suggest extract tasks, create jira, detect risks.
+    - Otherwise return a small set of sensible defaults.
+    """
+    suggestions = []
+    last_user = None
+    try:
+        if chat_history:
+            for msg in reversed(chat_history):
+                if msg.get('role') == 'user':
+                    last_user = msg.get('content', '')
+                    break
+    except Exception:
+        last_user = None
+
+    lu = (last_user or '').lower() if last_user else ''
+
+    # Always suggest summarize if processed_transcripts exist but not summaries
+    if last_result and isinstance(last_result, dict):
+        has_processed = bool(last_result.get('processed_transcripts'))
+        has_summaries = bool(last_result.get('summaries'))
+        if has_processed and not has_summaries:
+            suggestions.append('summarize selected events')
+        if has_summaries:
+            suggestions.append('extract tasks')
+            suggestions.append('create jira from action items')
+            suggestions.append('detect risks')
+
+    # Heuristic based on last user message
+    if 'fetch' in lu or 'calendar' in lu or 'event' in lu:
+        if 'fetch recent' not in suggestions:
+            suggestions.insert(0, 'fetch events')
+        if 'process selected events' not in suggestions:
+            suggestions.append('process selected events')
+    if 'summarize' in lu or 'summary' in lu:
+        if 'summarize selected events' not in suggestions:
+            suggestions.insert(0, 'summarize selected events')
+        if 'extract tasks' not in suggestions:
+            suggestions.append('extract tasks')
+        if 'detect risks' not in suggestions:
+            suggestions.append('detect risks')
+
+    # Defaults if nothing else
+    if not suggestions:
+        suggestions = [
+            'fetch events',
+            'summarize selected events',
+            'detect risks',
+            'extract tasks'
+        ]
+
+    # Deduplicate while preserving order
+    seen = set()
+    deduped = []
+    for s in suggestions:
+        if s not in seen:
+            deduped.append(s)
+            seen.add(s)
+    return deduped

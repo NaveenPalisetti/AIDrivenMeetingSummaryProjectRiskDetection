@@ -7,17 +7,121 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
+
+
 import streamlit as st
 import requests
+import re
 from mcp.ui.orchestrator_ui_components import (
     event_selector, display_event_details, display_processed_transcripts, display_summaries, display_errors
 )
+from mcp.ui.orchestrator_client import call_orchestrator
+import logging
+
+# --- Fallback get_dynamic_suggestions if not imported ---
+
+# Helper to get ordinal string (1st, 2nd, 3rd, ...)
+def ordinal(n):
+    if 10 <= n % 100 <= 20:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return str(n) + suffix
+
+def get_dynamic_suggestions(chat_history, last_result, events):
+    suggestions = []
+    # If no events, suggest fetching events
+    if not events or len(events) == 0:
+        suggestions.append("fetch events")
+    else:
+        # If events are present, suggest processing each event first, then summarizing
+        for idx, event in enumerate(events):
+            suggestions.append(f"process the {ordinal(idx+1)} event")
+        suggestions.append("process selected events")
+        suggestions.append("summarize events with " + st.session_state.get('summarizer_model', 'BART'))
+    # If last_result has summaries, suggest risk detection and extracting tasks
+    if last_result and isinstance(last_result, dict):
+        if last_result.get("summaries"):
+            suggestions.append("detect risks")
+            suggestions.append("extract tasks")
+        if last_result.get("action_items"):
+            suggestions.append("create jira from action items")
+    # Always suggest help
+    suggestions.append("help")
+    return suggestions
 
 st.set_page_config(page_title="AI Orchestrator Client", layout="wide")
 API_URL = "http://localhost:8000/mcp/orchestrate"  # Use local URL for FastAPI backend in Colab
 
-st.title("🤖 AI Orchestrator Client")
+st.title("🤖 AI-Driven Meeting Selected transcripts for preprocessingSummary & Risk Detection")
 st.caption("This app sends queries to the orchestrator API and displays the workflow results.")
+
+
+
+# --- Ensure results_history is always initialized ---
+if 'results_history' not in st.session_state:
+    st.session_state['results_history'] = []
+results_history = st.session_state['results_history']
+
+# --- Ensure chat_history is always initialized ---
+if 'chat_history' not in st.session_state:
+    st.session_state['chat_history'] = []
+chat_history = st.session_state['chat_history']
+
+
+# --- Ensure events and mode are always defined ---
+if 'events' not in st.session_state:
+    st.session_state['events'] = []
+events = st.session_state['events']
+mode = st.session_state.get('mode', 'default')
+
+# --- Sidebar: Suggestions and History ---
+
+with st.sidebar:
+    st.header("🧠 Summarizer Model")
+    model_choice = st.radio("Choose a summarizer: ", ["BART", "Mistral"], key="summarizer_model")
+
+    st.header("💡 Suggestions")
+    if results_history:
+        last_entry = results_history[-1]
+        conversation = []
+        for entry in results_history:
+            if entry['user']:
+                conversation.append({'role': 'user', 'content': entry['user']})
+        last_result = last_entry['result']
+        last_events = last_entry.get('events', [])
+        suggestions = get_dynamic_suggestions(conversation, last_result, last_events)
+        sidebar_cmds = {"fetch events", "summarize selected events", "detect risks", "extract tasks", "create jira from action items", "process selected events"}
+        filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
+        if filtered:
+            for s in filtered:
+                st.markdown(f"- {s}")
+    else:
+        # Show helpful starter suggestions on first load
+        starter_suggestions = [
+            "fetch events",
+            "summarize events with BART",
+            "summarize events with Mistral",
+            "detect risks",
+            "extract tasks",
+            "create jira from action items"
+        ]
+        for s in starter_suggestions:
+            st.markdown(f"- {s}")
+    st.markdown("---")
+    st.header("🕑 History")
+    for entry in results_history:
+        if entry['user']:
+            st.markdown(f"**You:** {entry['user']}")
+        if entry['result']:
+            st.markdown(f"**Orchestrator:** {str(entry['result'])[:100]}{'...' if len(str(entry['result']))>100 else ''}")
+
+
+
+# --- Chat input with icon at the bottom (st.chat_input) ---
+st.markdown("---")
+chat_input = st.chat_input("Type your command or question:")
+send_clicked = chat_input is not None and chat_input != ""
 
 # Small accessibility and style improvements
 st.markdown(
@@ -30,157 +134,83 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Compatibility helper for Streamlit rerun across versions
-def safe_rerun():
-    """Try to rerun the Streamlit script in a version-compatible way.
 
-    Falls back to a no-op if rerun is not available in the environment.
-    """
-    try:
-        if hasattr(st, "experimental_rerun"):
-            # Only call if not this function itself (avoid recursion)
-            if st.experimental_rerun != safe_rerun:
-                st.experimental_rerun()
-                return
-    except Exception:
-        pass
-    # Try raising the runtime RerunException for newer Streamlit internals
-    try:
-        # streamlit runtime import path differs across versions
-        from streamlit.runtime.scriptrunner import RerunException
-        raise RerunException()
-    except Exception:
+
+# Helper: call orchestrator and return result
+
+# Remove old _call_and_update definition (now replaced by the new one with timeout)
+
+# New _call_and_update function with timeout
+def _call_and_update(payload, chat_history, timeout=90):    
+    with st.spinner("Processing your request..."):
         try:
-            from streamlit.web import cli as stcli  # type: ignore
-            return
-        except Exception:
-            return
+            result = call_orchestrator(API_URL, payload, timeout=timeout)
+            chat_history.append({"role": "orchestrator", "content": result})
+            return result
+        except Exception as e:
+            chat_history.append({"role": "orchestrator", "content": f"API Error: {e}"})
+            return None
 
-# Sidebar: All options
-with st.sidebar:
-    st.header("Options")
-    mode = st.selectbox("Summarization Mode", ["bart", "mistral"], index=0, key="sidebar_summarization_mode")
-
-# --- Chat UI ---
-WELCOME_MSG = (
-    "Hello! 👋 I can help you with your meeting data.\n\n"
-    "You can ask me to:\n"
-    "- Fetch recent meeting events\n"
-    "- Summarize selected meetings\n"
-    "- Detect risks in meetings\n"
-    "- Create Jira tasks from meeting summaries\n"
-    "- Set permissions (e.g., summary, jira)\n"
-    "- Approve Jira creation\n\n"
-    "Just type your request below to get started!"
-)
-
-if "chat_history" not in st.session_state:
-    st.session_state["chat_history"] = []
-if not st.session_state["chat_history"] or st.session_state["chat_history"][0]["content"] != WELCOME_MSG:
-    st.session_state["chat_history"].insert(0, {"role": "orchestrator", "content": WELCOME_MSG})
-
-# Display chat history
+# Display persistent results history and dynamic suggestions
 import json
 def render_orchestrator_message(content):
     try:
+        # If content is a dict, only show user-friendly messages for known stages
         if isinstance(content, dict):
             result = content
         else:
-            result = json.loads(content.replace("'", '"')) if content.strip().startswith('{') else None
-        if result and isinstance(result, dict) and result.get('stage') == 'fetch' and 'calendar_events' in result:
-            st.markdown("**Orchestrator:** Here are your recent meeting events:")
-            events = result['calendar_events']
-            if events:
-                event_rows = []
-                for ev in events:
-                    event_rows.append({
-                        'Summary': ev.get('summary', ''),
-                        'Date': ev.get('created', '')[:10],
-                        'Description': ev.get('description', '')[:100] + ('...' if len(ev.get('description', '')) > 100 else '')
-                    })
-                st.table(event_rows)
-            # else:
-            #     st.info("No events found.")
-            return
+            result = json.loads(content.replace("'", '"')) if isinstance(content, str) and content.strip().startswith('{') else None
+        if result and isinstance(result, dict):
+            if result.get('stage') == 'fetch' and 'calendar_events' in result:
+                st.markdown(f"**Orchestrator:** Found {len(result.get('calendar_events', []))} recent meeting events. Use the table below to view details.")
+                return
+            # For summarize/process/preprocess, show summaries/action items if present, else show processing message
+            if result.get('stage') in ['preprocess', 'process', 'summarize']:
+                if result.get('summaries') or result.get('action_items'):
+                    st.markdown("## Summaries & Action Items")
+                    summaries = result.get("summaries", [])
+                    action_items = result.get("action_items", [])
+                    cols = st.columns([2, 1])
+                    with cols[0]:
+                        st.markdown("### Summary")
+                        if isinstance(summaries, str):
+                            display_summaries([summaries])
+                        else:
+                            display_summaries(summaries)
+                    with cols[1]:
+                        st.markdown("### Action Items")
+                        if action_items:
+                            from mcp.ui.orchestrator_ui_components import display_action_items
+                            display_action_items(action_items)
+                    return
+                else:
+                    st.markdown(f"**Orchestrator:** Processing event...")
+                    return
     except Exception:
         pass
-    st.markdown(f"**Orchestrator:** {content}")
+    if not isinstance(content, dict):
+        st.markdown(f"**Orchestrator:** {content}")
 
-for msg in st.session_state["chat_history"]:
-    if msg["role"] == "user":
-        st.markdown(f"**You:** {msg['content']}")
-    else:
-        render_orchestrator_message(msg['content'])
-
-
-
-
-# Show results/expanders after chat history
-result = st.session_state.get('last_result', None)
-events = []
-transcripts = []
-if result:
-    # Try common keys for events and transcripts
-    if "calendar_events" in result:
-        events = result.get("calendar_events", [])
-    elif "events" in result:
-        events = result.get("events", [])
-    if "calendar_transcripts" in result:
-        transcripts = result.get("calendar_transcripts", [])
-    elif "transcripts" in result:
-        transcripts = result.get("transcripts", [])
-
-    if events:
-        st.markdown("**Event & Transcript Overview**")
-        st.metric("Event Count", len(events))
-        st.metric("Transcript Count", len(transcripts))
-        # Allow selecting events and processing selected ones
-        st.markdown("Select events to process below:")
-        if 'events' in st.session_state:
-            session_events = st.session_state['events']
-            session_transcripts = st.session_state.get('transcripts', [])
-        else:
-            session_events = events
-            session_transcripts = transcripts
-        selected_indices = event_selector(session_events, session_transcripts)
-        if st.button("Process Selected Events"):
-            payload = {"query": "process_selected_events", "selected_event_indices": selected_indices, "mode": mode}
-            send_query(payload)
-            safe_rerun()
-
-    with st.expander("Processed Transcripts"):
-        processed = result.get("processed_transcripts", [])
-        display_processed_transcripts(processed)
-    with st.expander("Agent States & Outputs"):
-        if 'preproc_task_state' in result:
-            st.info(f"Preprocessing Task State: {result['preproc_task_state']}")
-        if 'preproc_response' in result:
-            st.json(result['preproc_response'])
-        if 'summ_task_state' in result:
-            st.info(f"Summarization Task State: {result['summ_task_state']}")
-        if 'summ_response' in result:
-            st.json(result['summ_response'])
-        if result.get('jira'):
-            st.info("Jira Task State:")
-            if 'jira_task_state' in result:
-                st.write(result['jira_task_state'])
-            st.json(result['jira'])
-        if result.get('risk'):
-            st.info("Risk Detection Task State:")
-            if 'risk_task_state' in result:
-                st.write(result['risk_task_state'])
-            st.json(result['risk'])
-    with st.expander("Errors & Debug Info"):
-        display_errors(result)
-else:
-    pass
-
-# Additional section for summarizing processed events
-if result and "processed_transcripts" in result:
-    # No summarize button; instruct user to type in chat
-
-    # Show summaries clearly after summarization
-    if result.get("summaries"):
+# Render the full conversation and results history
+for entry in results_history:
+    if entry['user']:
+        st.markdown(f"**You:** {entry['user']}")
+    render_orchestrator_message(entry['result'])
+    # Show events table if present
+    if entry.get('events'):
+        st.markdown(f"**Fetched {len(entry['events'])} Events**")
+        event_rows = []
+        for ev in entry['events']:
+            row = {}
+            if 'id' in ev:
+                row['id'] = ev['id']
+            if 'summary' in ev:
+                row['summary'] = ev['summary']
+            event_rows.append(row)
+        st.table(event_rows)
+    # Show summaries and action items if present
+    result = entry['result']
+    if isinstance(result, dict) and result.get('summaries'):
         st.markdown("## Summaries & Action Items")
         summaries = result.get("summaries", [])
         action_items = result.get("action_items", [])
@@ -196,116 +226,263 @@ if result and "processed_transcripts" in result:
             if action_items:
                 from mcp.ui.orchestrator_ui_components import display_action_items
                 display_action_items(action_items)
+    # --- Show warning if no summaries returned after summarize command ---
+    if (
+        isinstance(result, dict)
+        and 'summaries' not in result
+        and isinstance(entry.get('user', ''), str)
+        and 'summarize' in entry.get('user', '').lower()
+    ):
+        st.warning("No summaries were returned by the orchestrator. Please check the backend or try again.")
+    # Show processed transcripts if present
+    if isinstance(result, dict) and result.get("processed_transcripts"):
+        with st.expander("Processed Transcripts"):
+            processed = result.get("processed_transcripts", [])
+            display_processed_transcripts(processed)
+    # Show agent states and outputs if present
+    if isinstance(result, dict) and (
+        result.get('preproc_task_state') or result.get('preproc_response') or result.get('summ_task_state') or result.get('summ_response') or result.get('jira') or result.get('risk')):
+        with st.expander("Agent States & Outputs"):
+            if 'preproc_task_state' in result:
+                st.info(f"Preprocessing Task State: {result['preproc_task_state']}")
+            if 'preproc_response' in result:
+                st.json(result['preproc_response'])
+            if 'summ_task_state' in result:
+                st.info(f"Summarization Task State: {result['summ_task_state']}")
+            if 'summ_response' in result:
+                st.json(result['summ_response'])
+            if result.get('jira'):
+                st.info("Jira Task State:")
+                if 'jira_task_state' in result:
+                    st.write(result['jira_task_state'])
+                st.json(result['jira'])
+            if result.get('risk'):
+                st.info("Risk Detection Task State:")
+                if 'risk_task_state' in result:
+                    st.write(result['risk_task_state'])
+                st.json(result['risk'])
+    # Show errors if present
+    if isinstance(result, dict):
+        with st.expander("Errors & Debug Info"):
+            display_errors(result)
 
-    # Show action items clearly after summarization
-    if result.get("action_items"):
+# Dynamic suggestions based on full conversation
+if results_history:
+    last_entry = results_history[-1]
+    # Use the full conversation for context
+    conversation = []
+    for entry in results_history:
+        if entry['user']:
+            conversation.append({'role': 'user', 'content': entry['user']})
+    last_result = last_entry['result']
+    last_events = last_entry.get('events', [])
+    suggestions = get_dynamic_suggestions(
+        conversation,
+        last_result,
+        last_events
+    )
+else:
+    suggestions = []
+with st.expander("Suggested Commands / Tips", expanded=False):
+    sidebar_cmds = {"fetch events", "summarize selected events", "detect risks", "extract tasks", "create jira from action items", "process selected events"}
+    filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
+    if filtered:
+        st.markdown("**You can try these conversation commands:**")
+        for s in filtered:
+            st.markdown(f"- {s}")
+def parse_process_event_command(text):
+    # Match phrases like 'process the first event', 'process the 2nd event', etc.
+    match = re.search(r"process the (\d+)(?:st|nd|rd|th)? event", text.lower())
+    if match:
+        idx = int(match.group(1)) - 1
+        return idx
+    # Also support 'process first event', 'process second event', etc.
+    words = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"]
+    for i, w in enumerate(words):
+        if f"process the {w} event" in text.lower() or f"process {w} event" in text.lower():
+            return i
+    return None
+
+if chat_input:
+    chat_history.append({"role": "user", "content": chat_input})
+    # Check for summarization command
+    summarize_bart = re.search(r"summarize events with bart", chat_input, re.IGNORECASE)
+    summarize_mistral = re.search(r"summarize events with mistral", chat_input, re.IGNORECASE)
+    process_idx = parse_process_event_command(chat_input)
+    # Persist processed_transcripts in session state if present in last_result
+    if 'processed_transcripts' not in st.session_state:
+        st.session_state['processed_transcripts'] = []
+    if summarize_bart or summarize_mistral:
+        model = "BART" if summarize_bart else "Mistral"
+        # Use processed_transcripts from session state if available
+        processed_transcripts = st.session_state.get('processed_transcripts', [])
+        payload = {"query": f"summarize events", "mode": mode, "model": model}
+        if processed_transcripts:
+            payload["processed_transcripts"] = processed_transcripts
+        last_result = _call_and_update(payload, chat_history, timeout=90)
+    elif process_idx is not None and events and 0 <= process_idx < len(events):
+        # User requested to process a specific event by order
+        event = events[process_idx]
+        event_id = event.get('id')
+        if event_id:
+            payload = {"query": f"process event {event_id}", "mode": mode}
+            last_result = _call_and_update(payload, chat_history, timeout=90)
+    else:
+        payload = {"query": chat_input, "mode": mode}
+        last_result = _call_and_update(payload, chat_history, timeout=90)
+    # Extract events, transcripts, and processed_transcripts if present
+    if last_result:
+        if isinstance(last_result, dict):
+            if 'calendar_events' in last_result:
+                events = last_result.get('calendar_events', [])
+            elif 'events' in last_result:
+                events = last_result.get('events', [])
+            if 'calendar_transcripts' in last_result:
+                transcripts = last_result.get('calendar_transcripts', [])
+            elif 'transcripts' in last_result:
+                transcripts = last_result.get('transcripts', [])
+            # Store processed_transcripts in session state for next step
+            if 'processed_transcripts' in last_result and last_result['processed_transcripts']:
+                st.session_state['processed_transcripts'] = last_result['processed_transcripts']
+else:
+    # On first load, just show welcome and empty state
+    last_result = None
+    events = []
+    transcripts = []
+
+
+
+for msg in chat_history:
+    if msg["role"] == "user":
+        st.markdown(f"**You:** {msg['content']}")
+    else:
+        render_orchestrator_message(msg['content'])
+
+# Show results/expanders after chat history
+
+suggestions = []
+# Show results/expanders after chat history
+if last_result:
+    if events:
+        st.markdown(f"**Fetched {len(events)} Events**")
+        # Show a table of event summaries only, no selection or details
+        event_rows = []
+        for ev in events:
+            row = {}
+            if 'id' in ev:
+                row['id'] = ev['id']
+            if 'summary' in ev:
+                row['summary'] = ev['summary']
+            event_rows.append(row)
+        st.table(event_rows)
+    # Update suggestions dynamically after each processing step
+    suggestions = get_dynamic_suggestions(chat_history, last_result, events)
+    with st.expander("Processed Transcripts"):
+        processed = last_result.get("processed_transcripts", [])
+        display_processed_transcripts(processed)
+    with st.expander("Agent States & Outputs"):
+        if 'preproc_task_state' in last_result:
+            st.info(f"Preprocessing Task State: {last_result['preproc_task_state']}")
+        if 'preproc_response' in last_result:
+            st.json(last_result['preproc_response'])
+        if 'summ_task_state' in last_result:
+            st.info(f"Summarization Task State: {last_result['summ_task_state']}")
+        if 'summ_response' in last_result:
+            st.json(last_result['summ_response'])
+        if last_result.get('jira'):
+            st.info("Jira Task State:")
+            if 'jira_task_state' in last_result:
+                st.write(last_result['jira_task_state'])
+            st.json(last_result['jira'])
+        if last_result.get('risk'):
+            st.info("Risk Detection Task State:")
+            if 'risk_task_state' in last_result:
+                st.write(last_result['risk_task_state'])
+            # Try to extract and display detected risks in a user-friendly way
+            risk_obj = last_result['risk']
+            detected_risks = []
+            # Handle both list and dict structures
+            if isinstance(risk_obj, list):
+                # Look for detected_risks in the nested structure
+                for part in risk_obj:
+                    try:
+                        parts = part.get('parts', [])
+                        for p in parts:
+                            content = p.get('content', {})
+                            if isinstance(content, dict) and 'detected_risks' in content:
+                                detected_risks.extend(content['detected_risks'])
+                    except Exception:
+                        pass
+            elif isinstance(risk_obj, dict):
+                if 'detected_risks' in risk_obj:
+                    detected_risks = risk_obj['detected_risks']
+            if detected_risks:
+                st.markdown("### Detected Risks")
+                for risk in detected_risks:
+                    st.warning(risk)
+            else:
+                st.json(risk_obj)
+    with st.expander("Errors & Debug Info"):
+        display_errors(last_result)
+
+
+# Additional section for summarizing processed events
+if last_result and "processed_transcripts" in last_result:
+    if last_result.get("summaries"):
+        st.markdown("## Summaries & Action Items")
+        summaries = last_result.get("summaries", [])
+        action_items = last_result.get("action_items", [])
+        cols = st.columns([2, 1])
+        with cols[0]:
+            st.markdown("### Summary")
+            if isinstance(summaries, str):
+                display_summaries([summaries])
+            else:
+                display_summaries(summaries)
+        with cols[1]:
+            st.markdown("### Action Items")
+            if action_items:
+                from mcp.ui.orchestrator_ui_components import display_action_items
+                display_action_items(action_items)
+    if last_result.get("action_items"):
         from mcp.ui.orchestrator_ui_components import display_action_items
         st.markdown("## Action Items")
-        action_items = result.get("action_items", [])
+        action_items = last_result.get("action_items", [])
         display_action_items(action_items)
 
 # Move chat input and Send button to the bottom
 st.markdown("---")
 
-# Helper to send queries to the backend and update session state
-def send_query(payload):
-    with st.spinner("Processing your request..."):
-        try:
-            response = requests.post(API_URL, json=payload)
-            if response.status_code == 200:
-                result = response.json()
-                st.session_state["chat_history"].append({"role": "orchestrator", "content": result})
-                st.session_state['last_result'] = result
-                # Cache events/transcripts for UI selections
-                if isinstance(result, dict) and result.get('calendar_events'):
-                    st.session_state['events'] = result.get('calendar_events', [])
-                if isinstance(result, dict) and result.get('calendar_transcripts'):
-                    st.session_state['transcripts'] = result.get('calendar_transcripts', [])
-            else:
-                st.session_state["chat_history"].append({"role": "orchestrator", "content": f"API Error: {response.status_code} {response.text}"})
-        except Exception as e:
-            st.session_state["chat_history"].append({"role": "orchestrator", "content": f"Request failed: {e}"})
 
 
-# Sidebar quick-action toolbar
-st.sidebar.markdown("### Quick Actions")
-if st.sidebar.button("Fetch Events"):
-    st.session_state["chat_history"].append({"role": "user", "content": "Fetch my recent events"})
-    payload = {"query": "fetch recent events", "mode": mode}
-    send_query(payload)
-    safe_rerun()
-
-if st.sidebar.button("Summarize Events"):
-    st.session_state["chat_history"].append({"role": "user", "content": "Summarize selected events"})
-    payload = {"query": "summarize selected events", "mode": mode}
-    send_query(payload)
-    safe_rerun()
-
-if st.sidebar.button("Detect Risks"):
-    st.session_state["chat_history"].append({"role": "user", "content": "Detect risks in last summary"})
-    payload = {"query": "detect risks", "mode": mode}
-    send_query(payload)
-    safe_rerun()
-
-if st.sidebar.button("Extract Tasks"):
-    st.session_state["chat_history"].append({"role": "user", "content": "Extract tasks from last summary"})
-    payload = {"query": "extract tasks", "mode": mode}
-    send_query(payload)
-    safe_rerun()
-
-if st.sidebar.button("Create Jira"):
-    st.session_state["chat_history"].append({"role": "user", "content": "Create Jira from action items"})
-    payload = {"query": "create jira from action items", "mode": mode}
-    send_query(payload)
-    safe_rerun()
 
 
-# Chat input (uses chat_input if available, falls back to text_input)
-try:
-    chat_input = st.chat_input("Type your message and press Enter", key="chat_input")
-except Exception:
-    chat_input = st.text_input(
-        "Type your message and press Enter",
-        key="chat_input_fallback",
-        value="" if st.session_state.get("clear_input", False) else st.session_state.get("chat_input", "")
-    )
 
-if chat_input:
-    st.session_state["chat_history"].append({"role": "user", "content": chat_input})
-    payload = {"query": chat_input, "mode": mode}
-    # Special-case quick responses for action-words to show cached results first
-    if any(word in chat_input.lower() for word in ["task", "action item", "action items", "tasks"]):
-        last_result = st.session_state.get('last_result', {})
-        action_items = last_result.get("action_items", [])
-        if action_items:
-            from mcp.ui.orchestrator_ui_components import display_action_items
-            st.markdown("**Orchestrator:** Here are the action items from the last summary:")
-            display_action_items(action_items)
-            st.session_state["clear_input"] = True
-        else:
-            send_query(payload)
-    else:
-        send_query(payload)
-    st.session_state["_last_chat_input"] = chat_input
-    st.session_state["clear_input"] = True
-    safe_rerun()
+# --- Ensure events in session_state are always up-to-date with last_result ---
+last_result = st.session_state.get('last_result', None)
+if last_result:
+    # Try to extract events from last_result if session_state['events'] is empty
+    if not st.session_state.get('events'):
+        events = []
+        if isinstance(last_result, dict):
+            if 'calendar_events' in last_result:
+                events = last_result.get('calendar_events', [])
+            elif 'events' in last_result:
+                events = last_result.get('events', [])
+        if events:
+            st.session_state['events'] = events
 
-elif st.session_state.get("clear_input"):
-    st.session_state["clear_input"] = False
 
-    # Show detected risks clearly after risk step
-    if result and result.get("risk"):
-        st.markdown("## Detected Risks")
-        risks = result.get("risk", [])
-        for risk_obj in risks:
-            if isinstance(risk_obj, dict) and "parts" in risk_obj:
-                for part in risk_obj["parts"]:
-                    if part.get("content_type") == "application/json":
-                        detected = part.get("content", {}).get("detected_risks", [])
-                        if isinstance(detected, str):
-                            import ast
-                            detected = ast.literal_eval(detected)
-                        for r in detected:
-                            st.info(f"**Risk ID:** {r.get('id', '-')}, **Description:** {r.get('description', '-')}, **Severity:** {r.get('severity', '-')} ")
+
+
+
+# Suggested commands help box
+with st.expander("Suggested Commands / Tips", expanded=False):
+    sidebar_cmds = {"fetch events", "summarize selected events", "detect risks", "extract tasks", "create jira from action items", "process selected events"}
+    filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
+    if filtered:
+        st.markdown("**You can try these conversation commands:**")
+        for s in filtered:
+            st.markdown(f"- {s}")
 
 

@@ -10,9 +10,10 @@ from mcp.agents.mcp_google_calendar import MCPGoogleCalendar
 from mcp.agents.transcript_preprocessing_agent import TranscriptPreprocessingAgent
 from mcp.agents.summarization_agent import SummarizationAgent
 from mcp.agents.risk_detection_agent import RiskDetectionAgent
-from mcp.core.a2a_base_agent import A2AMessage, A2ATask, TaskState
+from mcp.core.a2a_base_agent import A2AMessage, TaskState
 from mcp.agents.notification_agent import NotificationAgent
 from mcp.agents import langchain_tools as lc_tools
+from mcp.agents.tool_adapter import invoke_tool
 import os
 
 class OrchestratorState:
@@ -34,11 +35,73 @@ class OrchestratorAgent:
         Interactive, stepwise workflow for orchestrator:
         stage: 'fetch' | 'preprocess' | 'summarize' | 'jira' | 'risk' | 'notify'
         """
-        print(f"[DEBUG] OrchestratorAgent.handle_query stage: {stage}, mode: {mode}, create_jira: {create_jira}")
+        print(f"[DEBUG] OrchestratorAgent.handle_query called with:")
+        print(f"        stage: {stage}")
+        print(f"        mode: {mode}")
+        print(f"        create_jira: {create_jira}")
+        print(f"        user: {user}")
+        print(f"        date: {date}")
+        print(f"        permissions: {permissions}")
+        print(f"        selected_event_indices: {selected_event_indices}")
+        processed_transcripts_str = str(processed_transcripts)
+        print(f"        processed_transcripts: {processed_transcripts_str[:100]}{'...' if len(processed_transcripts_str) > 100 else ''}")
+        print(f"        query: {query}")
         # mode = "bart"  # Force BART mode regardless of input
         result = {"stage": stage}
         try:
+            # Optionally run the LangGraph workflow when enabled.
+            use_workflow_env = os.environ.get("USE_LANGGRAPH_WORKFLOW")
+            if use_workflow_env == "1" and stage in ("fetch", "preprocess", "summarize", "jira", "risk", "notify"):
+                print("[DEBUG] LangGraph workflow enabled. Attempting workflow execution...")
+                try:
+                    from mcp.agents.meeting_workflow_graph import workflow, MeetingState
+                    init_state = MeetingState(user_id=user, date_range=None, transcript=None, mode=mode)
+                    print(f"[DEBUG] Initial workflow state: {init_state}")
+                    wf_state = None
+                    invoke_err = None
+                    try:
+                        if hasattr(workflow, 'run'):
+                            wf_state = workflow.run(init_state)
+                        elif hasattr(workflow, 'execute'):
+                            wf_state = workflow.execute(init_state)
+                        elif hasattr(workflow, 'start'):
+                            wf_state = workflow.start(init_state)
+                        elif callable(workflow):
+                            wf_state = workflow(init_state)
+                        else:
+                            raise AttributeError('No runnable entrypoint found on StateGraph')
+                    except Exception as ie:
+                        invoke_err = ie
+                    if wf_state is None:
+                        raise invoke_err or RuntimeError('Workflow invocation returned no state')
+                    print(f"[DEBUG] Workflow state after execution: {wf_state}")
+                    def _get(s, attr, default=None):
+                        try:
+                            if isinstance(s, dict):
+                                return s.get(attr, default)
+                            return getattr(s, attr, default)
+                        except Exception:
+                            return default
+                    result['calendar_events'] = _get(wf_state, 'events', []) or []
+                    transcript_val = _get(wf_state, 'transcript', None)
+                    if transcript_val:
+                        result['calendar_transcripts'] = [transcript_val]
+                    else:
+                        result['calendar_transcripts'] = _get(wf_state, 'transcripts', []) or []
+                    summary_val = _get(wf_state, 'summary', None)
+                    result['summaries'] = [summary_val] if summary_val else []
+                    result['action_items'] = _get(wf_state, 'action_items', []) or []
+                    result['risk'] = _get(wf_state, 'risks', []) or []
+                    result['jira'] = _get(wf_state, 'tasks', []) or []
+                    result['notification'] = _get(wf_state, 'notification', None)
+                    result['stage'] = 'workflow'
+                    print(f"[DEBUG] Workflow result: {result}")
+                    return result
+                except Exception as e:
+                    print(f"[WARN] LangGraph workflow failed: {e}")
+
             if stage == "fetch":
+                print("[DEBUG] Stage: fetch")
                 # Use LangChain calendar tool by default when available; env var can disable
                 use_lc_env = os.environ.get("USE_LANGCHAIN_TOOLS")
                 if use_lc_env is None:
@@ -49,27 +112,39 @@ class OrchestratorAgent:
                 now = datetime.datetime.utcnow()
                 start_time = now - datetime.timedelta(days=37)
                 end_time = now + datetime.timedelta(days=1)
+                print(f"[DEBUG] use_lc: {use_lc}")
                 if use_lc and hasattr(lc_tools, 'fetch_calendar_events_tool'):
                     try:
-                        res = lc_tools.fetch_calendar_events_tool(user_id=user, date_range=f"{start_time.isoformat()}/{end_time.isoformat()}")
-                        events = res.get('events', [])
-                        transcripts = res.get('transcript', []) if isinstance(res.get('transcript', []), list) else [res.get('transcript', '')]
+                        print("[DEBUG] Invoking LangChain fetch_calendar_events_tool...")
+                        inv = invoke_tool(lc_tools.fetch_calendar_events_tool, payload={"user_id": user, "date_range": f"{start_time.isoformat()}/{end_time.isoformat()}"})
+                        print(f"[DEBUG] fetch_calendar_events_tool result: {inv}")
+                        if inv.get('status') == 'ok':
+                            res = inv.get('result')
+                            events = res.get('events', [])
+                            transcripts = res.get('transcript', []) if isinstance(res.get('transcript', []), list) else [res.get('transcript', '')]
+                        else:
+                            raise RuntimeError(inv.get('error'))
                     except Exception:
+                        print("[DEBUG] Falling back to MCPGoogleCalendar for fetch events.")
                         cal = MCPGoogleCalendar(calendar_id="primary")
                         events = cal.fetch_events(start_time, end_time)
                         transcripts = cal.get_transcripts_from_events(events)
                 else:
+                    print("[DEBUG] Using MCPGoogleCalendar for fetch events.")
                     cal = MCPGoogleCalendar(calendar_id="primary")
                     events = cal.fetch_events(start_time, end_time)
                     transcripts = cal.get_transcripts_from_events(events)
+                print(f"[DEBUG] Events fetched: {len(events)}; Transcripts fetched: {len(transcripts)}")
                 result['calendar_events'] = events
                 result['calendar_transcripts'] = transcripts
                 result['event_count'] = len(events)
                 result['transcript_count'] = len(transcripts)
                 result['next_actions'] = ["preprocess"]
+                #print(f"[DEBUG] Fetch result: {result}")
                 return result
 
             if stage == "preprocess":
+                print("[DEBUG] Stage: preprocess")
                 # UI-driven event selection
                 cal_events = []
                 cal_transcripts = []
@@ -94,9 +169,13 @@ class OrchestratorAgent:
                 result['selected_events'] = selected_events
                 result['selected_transcripts'] = selected_transcripts
                 result['transcript_chunks'] = selected_transcripts
+                #print(f"[DEBUG] Selected transcripts for preprocessing: {selected_transcripts}")
                 preproc = TranscriptPreprocessingAgent()
                 preproc_payload = {"transcripts": selected_transcripts}
+                #print(f"[DEBUG] Preprocessing payload: {preproc_payload}")
                 preproc_response = a2a_request(preproc.process, preproc_payload)
+                preproc_response_str = str(preproc_response)
+                print(f"[DEBUG] Preprocessing response: {preproc_response_str[:100]}{'...' if len(preproc_response_str) > 100 else ''}")
                 if preproc_response["status"] == "ok":
                     processed_transcripts_msg = preproc_response["result"]
                     processed_transcripts = []
@@ -109,33 +188,106 @@ class OrchestratorAgent:
                     result['next_actions'] = ["summarize"]
                 else:
                     result['preprocessing_error'] = preproc_response["error"]
+                #print(f"[DEBUG] Preprocess result: {result}")
                 return result
 
             if stage == "summarize":
-                print(f"[DEBUG] Summarize stage: processed_transcripts arg: {processed_transcripts}")
+                print(f"[DEBUG] Stage: summarize")
+                processed_transcripts_str = str(processed_transcripts)
+                print(f"[DEBUG] processed_transcripts arg: {processed_transcripts_str[:100]}{'...' if len(processed_transcripts_str) > 100 else ''}")
+                # Determine transcripts to summarize, with fallbacks
+                print(f"[DEBUG] transcripts_to_summarize (before): {processed_transcripts_str[:100]}{'...' if len(processed_transcripts_str) > 100 else ''}")
                 if processed_transcripts is not None:
                     transcripts_to_summarize = processed_transcripts
                 else:
-                    transcripts_to_summarize = query.get('processed_transcripts', []) if isinstance(query, dict) else []
+                    if isinstance(query, dict):
+                        transcripts_to_summarize = query.get('processed_transcripts') or query.get('calendar_transcripts') or []
+                    else:
+                        transcripts_to_summarize = []
+
+                # If still empty, attempt to fetch calendar transcripts as a last resort
+                transcripts_str = str(transcripts_to_summarize)
+                print(f"[DEBUG] transcripts_to_summarize (after fallback): {transcripts_str[:100]}{'...' if len(transcripts_str) > 100 else ''}")
+                if not transcripts_to_summarize:
+                    try:
+                        cal = MCPGoogleCalendar(calendar_id="primary")
+                        import datetime
+                        now = datetime.datetime.utcnow()
+                        start_time = now - datetime.timedelta(days=37)
+                        end_time = now + datetime.timedelta(days=1)
+                        cal_events = cal.fetch_events(start_time, end_time)
+                        transcripts_to_summarize = cal.get_transcripts_from_events(cal_events)
+                    except Exception as e:
+                        print(f"[WARN] Failed to fetch calendar transcripts as fallback: {e}")
+
+                if not transcripts_to_summarize:
+                    result['error'] = "No transcripts available to summarize. Please fetch and preprocess events first."
+                    return result
+
                 # Prefer LangChain summarize tool by default when available; env var can disable
                 use_lc_env = os.environ.get("USE_LANGCHAIN_TOOLS")
                 if use_lc_env is None:
                     use_lc = hasattr(lc_tools, 'summarize_meeting')
                 else:
                     use_lc = use_lc_env == "1"
+
                 summaries = []
+
+                def _invoke_tool(tool, full_transcript, mode_val=None):
+                    # Robust invocation wrapper for LangChain tool-like objects
+                    try:
+                        if callable(tool):
+                            try:
+                                return tool(full_transcript, mode=mode_val)
+                            except TypeError:
+                                # Try passing a dict payload
+                                return tool({"transcript": full_transcript, "mode": mode_val})
+                        if hasattr(tool, 'run'):
+                            try:
+                                return tool.run(full_transcript, mode=mode_val)
+                            except TypeError:
+                                return tool.run({"transcript": full_transcript, "mode": mode_val})
+                        if hasattr(tool, 'func'):
+                            try:
+                                return tool.func(full_transcript, mode=mode_val)
+                            except TypeError:
+                                return tool.func({"transcript": full_transcript, "mode": mode_val})
+                    except Exception as e:
+                        raise
+                    raise TypeError("Tool object is not callable and does not expose run/func")
+
                 # Prefer calling LangChain summarize tool when enabled
+                print(f"[DEBUG] use_lc: {use_lc}")
                 if use_lc and hasattr(lc_tools, 'summarize_meeting'):
                     try:
+                        print("[DEBUG] Invoking LangChain summarize_meeting tool...")
                         full_transcript = "\n".join(transcripts_to_summarize)
-                        res = lc_tools.summarize_meeting(full_transcript, mode=mode)
-                        summaries = [res.get('summary', '')]
-                        action_items = res.get('action_items', [])
-                        result['action_items'] = action_items
+                        tool = lc_tools.summarize_meeting
+                        inv = invoke_tool(tool, payload={"transcript": full_transcript, "mode": mode}, mode=mode)
+                        inv_str = str(inv)
+                        print(f"[DEBUG] summarize_meeting result: {inv_str[:200]}{'...' if len(inv_str) > 200 else ''}")
+                        if inv.get('status') != 'ok':
+                            raise RuntimeError(inv.get('error'))
+                        res = inv.get('result')
+
+                        # Normalize response
+                        if isinstance(res, dict):
+                            summaries = [res.get('summary', '')] if res.get('summary') else ([res.get('summaries')] if res.get('summaries') else [])
+                            action_items = res.get('action_items', [])
+                            if action_items:
+                                result['action_items'] = action_items
+                        elif isinstance(res, str):
+                            summaries = [res]
+                        else:
+                            try:
+                                summaries = [str(res)]
+                            except Exception:
+                                summaries = []
                     except Exception as e:
                         print(f"[WARN] LangChain summarizer failed: {e}")
                         summaries = []
                 else:
+                    # Fallback to internal SummarizationAgent
                     summarizer = SummarizationAgent(mode=mode)
                     initial_msg = A2AMessage(message_id=str(uuid.uuid4()), role="user")
                     initial_msg.add_part("application/json", {"processed_transcripts": transcripts_to_summarize, "mode": mode})
@@ -146,34 +298,51 @@ class OrchestratorAgent:
                         for part in summary_msg.parts:
                             if getattr(part, 'content_type', None) == "text/plain":
                                 summaries.append(part.content)
+
+                summaries_str = str(summaries)
+                print(f"[DEBUG] Summaries: {summaries_str[:100]}{'...' if len(summaries_str) > 100 else ''}")
                 result['summaries'] = summaries
                 result['summary_count'] = len(summaries)
                 result['next_actions'] = ["jira", "risk"]
+                result_str = str(result)
+                print(f"[DEBUG] Summarize result: {result_str[:200]}{'...' if len(result_str) > 200 else ''}")
                 return result
 
             if stage == "jira":
+                print("[DEBUG] Stage: jira")
                 summaries = query.get('summaries', []) if isinstance(query, dict) else []
                 from mcp.agents.jira_agent import JiraAgent
+                print(f"[DEBUG] Summaries for jira: {summaries}")
                 jira_agent = JiraAgent()
                 jira_msg = A2AMessage(message_id=str(uuid.uuid4()), role="user")
                 jira_msg.add_part("application/json", {"summary": summaries, "user": user, "date": date})
+                print(f"[DEBUG] Jira message: {jira_msg}")
                 jira_task_id = jira_agent.create_task(jira_msg)
+                print(f"[DEBUG] Jira task id: {jira_task_id}")
                 jira_response_msg = jira_agent.create_jira(summaries, user=user, date=date)
+                print(f"[DEBUG] Jira response message: {jira_response_msg}")
                 jira_agent.update_task(jira_task_id, jira_response_msg, TaskState.COMPLETED)
                 created_tasks = []
                 if hasattr(jira_response_msg, 'parts'):
                     for part in jira_response_msg.parts:
                         if getattr(part, 'content_type', None) == "application/json":
                             created_tasks = part.content.get('created_tasks', [])
+                created_tasks_str = str(created_tasks)
+                print(f"[DEBUG] Jira created tasks: {created_tasks_str[:100]}{'...' if len(created_tasks_str) > 100 else ''}")
                 result['jira'] = [created_tasks]
                 result['next_actions'] = ["risk"]
+                result_str = str(result)
+                print(f"[DEBUG] Jira result: {result_str[:100]}{'...' if len(result_str) > 100 else ''}")
                 return result
 
             if stage == "risk":
+                print("[DEBUG] Stage: risk")
                 summaries = query.get('summaries', []) if isinstance(query, dict) else []
                 created_tasks = query.get('jira', [{}])[0] if isinstance(query, dict) and 'jira' in query else []
                 summary_for_risk = summaries[0] if summaries else ""
                 tasks_for_risk = created_tasks.get('created_tasks', []) if isinstance(created_tasks, dict) else []
+                print(f"[DEBUG] Summaries for risk: {summaries}")
+                print(f"[DEBUG] Tasks for risk: {tasks_for_risk}")
                 # Prefer LangChain risk tool if available (default ON when tool exists)
                 use_lc_env = os.environ.get("USE_LANGCHAIN_TOOLS")
                 if use_lc_env is None:
@@ -181,41 +350,60 @@ class OrchestratorAgent:
                 else:
                     use_lc = use_lc_env == "1"
                 detected_risks = []
+                print(f"[DEBUG] use_lc: {use_lc}")
                 if use_lc and hasattr(lc_tools, 'detect_risks_tool'):
                     try:
-                        res = lc_tools.detect_risks_tool(summary=summary_for_risk)
-                        detected_risks = res.get('risks', [])
+                        print("[DEBUG] Invoking LangChain detect_risks_tool...")
+                        inv = invoke_tool(lc_tools.detect_risks_tool, payload={"summary": summary_for_risk})
+                        print(f"[DEBUG] detect_risks_tool result: {inv}")
+                        if inv.get('status') == 'ok':
+                            res = inv.get('result')
+                            detected_risks = res.get('risks', [])
+                        else:
+                            raise RuntimeError(inv.get('error'))
                     except Exception as e:
                         print(f"[WARN] LangChain risk tool failed: {e}")
                 if not detected_risks:
                     progress = {}
                     risk_agent = RiskDetectionAgent()
                     detected_risks = risk_agent.detect(meeting_id=date or "meeting", summary={"summary_text": summary_for_risk}, tasks=tasks_for_risk, progress=progress)
+                print(f"[DEBUG] Detected risks: {detected_risks}")
                 result['risk'] = [
                     {"parts": [
                         {"content_type": "application/json", "content": {"detected_risks": detected_risks}}
                     ]}
                 ]
                 result['next_actions'] = ["notify"]
+                print(f"[DEBUG] Risk result: {result}")
                 return result
 
             if stage == "notify":
+                print("[DEBUG] Stage: notify")
                 summaries = query.get('summaries', []) if isinstance(query, dict) else []
                 created_tasks = query.get('jira', [{}])[0] if isinstance(query, dict) and 'jira' in query else []
                 risks = query.get('risk', [{}])[0] if isinstance(query, dict) and 'risk' in query else []
                 summary_for_notify = summaries[0] if summaries else ""
                 tasks_for_notify = created_tasks.get('created_tasks', []) if isinstance(created_tasks, dict) else []
                 detected_risks = risks.get('parts', [{}])[0].get('content', {}).get('detected_risks', []) if isinstance(risks, dict) else []
+                print(f"[DEBUG] Summaries for notify: {summaries}")
+                print(f"[DEBUG] Tasks for notify: {tasks_for_notify}")
+                print(f"[DEBUG] Detected risks for notify: {detected_risks}")
                 # Prefer LangChain notification tool if available (default ON when tool exists)
                 use_lc_env = os.environ.get("USE_LANGCHAIN_TOOLS")
                 if use_lc_env is None:
                     use_lc = hasattr(lc_tools, 'send_notification_tool')
                 else:
                     use_lc = use_lc_env == "1"
+                print(f"[DEBUG] use_lc: {use_lc}")
                 if use_lc and hasattr(lc_tools, 'send_notification_tool'):
                     try:
-                        lc_tools.send_notification_tool(task=str(tasks_for_notify[:1]), user=user)
-                        result['notified'] = True
+                        print("[DEBUG] Invoking LangChain send_notification_tool...")
+                        inv = invoke_tool(lc_tools.send_notification_tool, payload={"task": str(tasks_for_notify[:1]), "user": user})
+                        print(f"[DEBUG] send_notification_tool result: {inv}")
+                        if inv.get('status') == 'ok':
+                            result['notified'] = True
+                        else:
+                            raise RuntimeError(inv.get('error'))
                     except Exception as e:
                         print(f"[WARN] LangChain notification tool failed: {e}")
                         notification_agent = NotificationAgent()
@@ -234,14 +422,20 @@ class OrchestratorAgent:
                         tasks=tasks_for_notify,
                         risks=detected_risks
                     )
+                    print(f"[DEBUG] Notified: {result.get('notified', False)}")
                     result['notified'] = True
-                result['next_actions'] = []
-                return result
+                    result['next_actions'] = []
+                    print(f"[DEBUG] Notify result: {result}")
+                    return result
 
+            print(f"[DEBUG] Unknown stage encountered: {stage}")
             result['error'] = f"Unknown stage: {stage}"
+            print(f"[DEBUG] Error result: {result}")
             return result
         except Exception as e:
+            print(f"[ERROR] Exception in handle_query: {e}")
             result['error'] = str(e)
+            print(f"[DEBUG] Exception result: {result}")
             return result
 
     def _validate_date(self, date: str) -> bool:

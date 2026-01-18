@@ -36,19 +36,28 @@ async def summarize(transcript_in: TranscriptIn):
 # New endpoint for orchestrator agent
 @app.post("/mcp/orchestrate")
 async def orchestrate(orchestrator_in: OrchestratorIn):
-    # Determine stage based on query
+    print("[DEBUG] /mcp/orchestrate called")
+    print(f"[DEBUG] Received query: {orchestrator_in.query}")
+    print(f"[DEBUG] Selected event indices: {orchestrator_in.selected_event_indices}")
+    print(f"[DEBUG] Mode: {orchestrator_in.mode}")
+    processed_transcripts_str = str(orchestrator_in.processed_transcripts)
+    print(f"[DEBUG] Processed transcripts: {processed_transcripts_str[:100]}{'...' if len(processed_transcripts_str) > 100 else ''}")
+    # Determine stage based on query (robust to natural language variants)
+    q = (orchestrator_in.query or "").lower()
     stage = "fetch"
-    if orchestrator_in.query == "process_selected_events":
+    # exact token mapping (underscore) or natural language phrases
+    if q.strip() in ("process_selected_events", "process selected events", "preprocess", "preprocess selected events") or "process" in q:
         stage = "preprocess"
-    elif "summarize" in orchestrator_in.query.lower():
+    elif "summarize" in q or "summary" in q:
         stage = "summarize"
-    elif "jira" in orchestrator_in.query.lower():
+    elif "jira" in q or "create jira" in q:
         stage = "jira"
-    elif "risk" in orchestrator_in.query.lower():
+    elif "risk" in q or "detect risk" in q:
         stage = "risk"
-    elif "notify" in orchestrator_in.query.lower():
+    elif "notify" in q or "notification" in q or "notify" in q:
         stage = "notify"
-    # Call the orchestrator agent's handle_query method
+    print(f"[DEBUG] Determined stage: {stage}")
+    print("[DEBUG] Calling orchestrator.handle_query...")
     result = orchestrator.handle_query(
         query=orchestrator_in.query,
         selected_event_indices=orchestrator_in.selected_event_indices,
@@ -56,4 +65,6 @@ async def orchestrate(orchestrator_in: OrchestratorIn):
         stage=stage,
         processed_transcripts=orchestrator_in.processed_transcripts
     )
+    #print("[DEBUG] Orchestrator result:", result)
+    print("[DEBUG] Orchestrator result (truncated):", str(result)[:300], "..." if len(str(result)) > 100 else "result came")
     return result
