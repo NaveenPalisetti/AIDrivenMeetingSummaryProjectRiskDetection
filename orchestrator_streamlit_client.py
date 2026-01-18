@@ -371,7 +371,8 @@ if chat_input:
         if processed_transcripts:
             payload["processed_transcripts"] = processed_transcripts
         #print(f"[DEBUG] Sending summarize payload: {payload}")
-        last_result = _call_and_update(payload, chat_history, timeout=180)
+        timeout_val = 3000 if model == "Mistral" else 90
+        last_result = _call_and_update(payload, chat_history, timeout=timeout_val)
         st.session_state['last_result'] = last_result
     elif process_idx is not None and events and 0 <= process_idx < len(events):
         event = events[process_idx]
