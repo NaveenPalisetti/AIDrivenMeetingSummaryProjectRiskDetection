@@ -10,7 +10,7 @@ def a2a_endpoint(func: Callable) -> Callable:
     def wrapper(*args, **kwargs):
         print(f"[A2A] ENTER endpoint: {func.__name__}")
         print(f"[A2A] Args: {args}")
-        print(f"[A2A] Kwargs: {kwargs}")
+        #print(f"[A2A] Kwargs: {kwargs}")
         try:
             result = func(*args, **kwargs)
             print(f"[A2A] EXIT endpoint: {func.__name__} -> result")

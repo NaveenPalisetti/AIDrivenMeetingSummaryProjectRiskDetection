@@ -23,6 +23,7 @@ class OrchestratorIn(BaseModel):
     selected_event_indices: list = None
     mode: str = None
     processed_transcripts: list = None
+    selected_action_items: list = None
 
 
 @app.post("/mcp/summarize")
@@ -63,7 +64,8 @@ async def orchestrate(orchestrator_in: OrchestratorIn):
         selected_event_indices=orchestrator_in.selected_event_indices,
         mode=orchestrator_in.mode,
         stage=stage,
-        processed_transcripts=orchestrator_in.processed_transcripts
+        processed_transcripts=orchestrator_in.processed_transcripts,
+        selected_action_items=orchestrator_in.selected_action_items
     )
     #print("[DEBUG] Orchestrator result:", result)
     print("[DEBUG] Orchestrator result (truncated):", str(result)[:300], "..." if len(str(result)) > 100 else "result came")
