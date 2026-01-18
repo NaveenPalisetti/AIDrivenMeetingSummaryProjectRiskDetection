@@ -4,25 +4,25 @@ import torch
 
 def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting_id):
     # Accept either a string (single transcript) or a list (pre-chunked)
+    print("[Mistral] summarize_with_mistral called. Meeting ID:", meeting_id)
     if isinstance(transcript, list):
         transcript_chunks = [t for t in transcript if t and len(t.split()) >= 10]
+        print(f"[Mistral] Received transcript as list. {len(transcript_chunks)} valid chunks.")
         if not transcript_chunks:
-            # print("[Mistral] No valid transcript chunks for summarization.")
+            print("[Mistral] No valid transcript chunks for summarization.")
             return {
                 'meeting_id': meeting_id,
                 'summary_text': "Transcript too short for summarization.",
                 'action_items': []
             }
-        # print(f"[Mistral] Received {len(transcript_chunks)} pre-chunked transcript(s).")
     else:
         if not transcript or len(transcript.split()) < 10:
-            # print("[Mistral] Transcript too short for summarization.")
+            print("[Mistral] Transcript too short for summarization.")
             return {
                 'meeting_id': meeting_id,
                 'summary_text': "Transcript too short for summarization.",
                 'action_items': []
             }
-        # --- Chunking logic ---
         def chunk_text(text, max_words=900):
             words = text.split()
             chunks = []
@@ -31,12 +31,13 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
                 chunks.append(chunk)
             return chunks
         transcript_chunks = chunk_text(transcript, max_words=900)
-        # print(f"[Mistral] Transcript split into {len(transcript_chunks)} chunk(s).")
+        print(f"[Mistral] Transcript split into {len(transcript_chunks)} chunk(s).")
 
     all_summaries = []
     all_action_items = []
 
     for idx, chunk in enumerate(transcript_chunks):
+        print(f"[Mistral][Chunk {idx+1}] Processing chunk of length {len(chunk.split())} words.")
         mistral_prompt = (
             "You are an AI specialized in analyzing meeting transcripts.\n"
             "Your task is to produce:\n"
@@ -68,6 +69,7 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
         )
         # print(f"[Mistral][Chunk {idx+1}] Prompt sent to model (first 500 chars):\n", mistral_prompt[:500], "..." if len(mistral_prompt) > 500 else "")
         device = next(mistral_model.parameters()).device
+        print(f"[Mistral][Chunk {idx+1}] Using device: {device}")
         encoded = mistral_tokenizer.encode_plus(
             mistral_prompt,
             truncation=True,
@@ -76,6 +78,7 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
         )
         input_ids = encoded["input_ids"].to(device)
         attention_mask = encoded["attention_mask"].to(device)
+        print(f"[Mistral][Chunk {idx+1}] Input IDs shape: {input_ids.shape}")
         summary_ids = mistral_model.generate(
             input_ids,
             attention_mask=attention_mask,
@@ -86,8 +89,7 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
             pad_token_id=mistral_tokenizer.eos_token_id
         )
         mistral_output = mistral_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-        # print(f"[Mistral][Chunk {idx+1}] Raw model output (first 500 chars):\n", mistral_output[:500], "..." if len(mistral_output) > 500 else "")
-        # print(f"[Mistral][Chunk {idx+1}] Full decoded output:\n", mistral_output)
+        print(f"[Mistral][Chunk {idx+1}] Model output (first 500 chars):\n{mistral_output[:500]}{'...' if len(mistral_output) > 500 else ''}")
 
         def extract_last_json(text):
             # Find all top-level JSON objects and return the last one
@@ -113,19 +115,19 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
 
         json_str = extract_last_json(mistral_output)
         if json_str:
-            # print(f"[Mistral][Chunk {idx+1}] JSON block found in output.")
+            print(f"[Mistral][Chunk {idx+1}] JSON block found in output.")
             try:
                 parsed = json.loads(json_str)
                 summary_text = parsed.get('summary', [])
                 action_items = parsed.get('action_items', [])
-                # print(f"[Mistral][Chunk {idx+1}] Parsed summary: {summary_text}")
-                # print(f"[Mistral][Chunk {idx+1}] Parsed action_items: {action_items}")
+                print(f"[Mistral][Chunk {idx+1}] Parsed summary: {summary_text}")
+                print(f"[Mistral][Chunk {idx+1}] Parsed action_items: {action_items}")
             except Exception as e:
-                # print(f"[Mistral][Chunk {idx+1}] JSON parsing error: {e}")
+                print(f"[Mistral][Chunk {idx+1}] JSON parsing error: {e}")
                 summary_text = []
                 action_items = []
         else:
-            # print(f"[Mistral][Chunk {idx+1}] No JSON block found in output.")
+            print(f"[Mistral][Chunk {idx+1}] No JSON block found in output.")
             summary_text = []
             action_items = []
             lines = mistral_output.splitlines()
@@ -167,15 +169,17 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
             return False
         filtered_summaries = [s for s in (summary_text if isinstance(summary_text, list) else [summary_text]) if is_valid_summary_item(s)]
         filtered_action_items = [a for a in (action_items if isinstance(action_items, list) else [action_items]) if is_valid_action_item(a)]
-        # print(f"[Mistral][Chunk {idx+1}] Filtered summary: {filtered_summaries}")
-        # print(f"[Mistral][Chunk {idx+1}] Filtered action_items: {filtered_action_items}")
+        print(f"[Mistral][Chunk {idx+1}] Filtered summary: {filtered_summaries}")
+        print(f"[Mistral][Chunk {idx+1}] Filtered action_items: {filtered_action_items}")
         all_summaries.extend(filtered_summaries)
         all_action_items.extend(filtered_action_items)
-        # print(f"[Mistral][Chunk {idx+1}] all_summaries so far: {all_summaries}")
-        # print(f"[Mistral][Chunk {idx+1}] all_action_items so far: {all_action_items}")
+        print(f"[Mistral][Chunk {idx+1}] all_summaries so far: {all_summaries}")
+        print(f"[Mistral][Chunk {idx+1}] all_action_items so far: {all_action_items}")
 
     # print(f"[Mistral] FINAL all_summaries: {all_summaries}")
     # print(f"[Mistral] FINAL all_action_items: {all_action_items}")
+    print(f"[Mistral] FINAL all_summaries: {all_summaries}")
+    print(f"[Mistral] FINAL all_action_items: {all_action_items}")
     return {
         'meeting_id': meeting_id,
         'summary_text': all_summaries,
