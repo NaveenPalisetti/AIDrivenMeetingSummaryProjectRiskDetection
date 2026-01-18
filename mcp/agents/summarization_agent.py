@@ -119,12 +119,16 @@ class SummarizationAgent(A2AAgent):
         if processed_transcripts is None:
             processed_transcripts = kwargs.get("processed_transcripts", [])
         print(f"[DEBUG] summarize_protocol received mode arg: {mode}, self.mode: {self.mode}")
-        mode = mode or self.mode
+        mode = (mode or self.mode)
+        if isinstance(mode, str):
+            mode = mode.lower()
         print(f"[SummarizationAgent] summarize_protocol using mode: {mode}")
         print(f"[SummarizationAgent] Number of chunks: {len(processed_transcripts)}")
         full_transcript = "\n".join(processed_transcripts)
         print(f"[SummarizationAgent] Full transcript length: {len(full_transcript)}")
         summary = None
+        action_items = []
+        download_link = None
         if mode == "bart":
             print("[SummarizationAgent] Entering BART branch")
             try:
@@ -132,6 +136,10 @@ class SummarizationAgent(A2AAgent):
                 print(f"[DEBUG] BART model objects: tokenizer={tokenizer is not None}, model={model is not None}")
                 summary_obj = summarize_with_bart(tokenizer, model, full_transcript, "meeting")
                 summary = summary_obj.get('summary_text', '')
+                # Try to extract action_items if present in summary_obj
+                action_items = summary_obj.get('action_items', [])
+                # Optionally, create a download link for the summary (simulate as a placeholder)
+                download_link = summary_obj.get('download_link', None)
                 print(f"[DEBUG] BART summary: {summary[:100]}")
             except Exception as e:
                 print(f"[ERROR] BART Exception: {e}")
@@ -143,6 +151,8 @@ class SummarizationAgent(A2AAgent):
                 print("[SummarizationAgent] Mistral model loaded.")
                 summary_obj = summarize_with_mistral(mistral_tokenizer, mistral_model, full_transcript, "meeting")
                 summary = summary_obj.get('summary_text', '')
+                action_items = summary_obj.get('action_items', [])
+                download_link = summary_obj.get('download_link', None)
                 print("[SummarizationAgent] Mistral summary received.")
             except Exception as e:
                 print(f"[SummarizationAgent] Mistral Exception: {e}")
@@ -151,6 +161,8 @@ class SummarizationAgent(A2AAgent):
                     tokenizer, model = get_bart_model()
                     summary_obj = summarize_with_bart(tokenizer, model, full_transcript, "meeting")
                     summary = summary_obj.get('summary_text', '')
+                    action_items = summary_obj.get('action_items', [])
+                    download_link = summary_obj.get('download_link', None)
                     print("[SummarizationAgent] Fallback BART summary used.")
                 except Exception as e2:
                     print(f"[SummarizationAgent] Fallback BART Exception: {e2}")
@@ -160,13 +172,17 @@ class SummarizationAgent(A2AAgent):
             print("[SummarizationAgent] Entering fallback branch (no model available)")
             summary = full_transcript[:100] + ("..." if len(full_transcript) > 100 else "")
         print(f"[SummarizationAgent] Final summary length: {len(summary) if summary else 0}")
-        
-        # Compose A2AMessage response
-        message = A2AMessage(message_id=str(uuid.uuid4()), role="agent")
-        message.add_part("text/plain", f"Summary mode: {mode}")
-        message.add_part("text/plain", f"Transcript length: {len(full_transcript)}")
-        message.add_part("text/plain", summary or "No summary generated.")
-        return message
+
+        # Compose a structured result for UI compatibility
+        result = {
+            "summary": summary or "No summary generated.",
+            "action_items": action_items,
+            "download_link": download_link,
+            "mode": mode,
+            "transcript_length": len(full_transcript)
+        }
+        # Optionally, you can still return an A2AMessage if required elsewhere
+        return result
 
     async def summarize(self, meeting_id: str, transcript: str) -> dict:
         api_key = os.environ.get('OPENAI_API_KEY')

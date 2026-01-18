@@ -297,12 +297,22 @@ class OrchestratorAgent:
                     initial_msg = A2AMessage(message_id=str(uuid.uuid4()), role="user")
                     initial_msg.add_part("application/json", {"processed_transcripts": transcripts_to_summarize, "mode": mode})
                     task_id = summarizer.create_task(initial_msg)
-                    summary_msg = summarizer.summarize_protocol(processed_transcripts=transcripts_to_summarize, mode=mode)
-                    summarizer.update_task(task_id, summary_msg, TaskState.COMPLETED)
-                    if hasattr(summary_msg, 'parts'):
-                        for part in summary_msg.parts:
-                            if getattr(part, 'content_type', None) == "text/plain":
-                                summaries.append(part.content)
+                    summary_result = summarizer.summarize_protocol(processed_transcripts=transcripts_to_summarize, mode=mode)
+                    summarizer.update_task(task_id, summary_result, TaskState.COMPLETED)
+                    # summary_result is now a dict with keys: summary, action_items, download_link, etc.
+                    if isinstance(summary_result, dict):
+                        if summary_result.get('summary'):
+                            summaries.append(summary_result['summary'])
+                        if summary_result.get('action_items'):
+                            result['action_items'] = summary_result['action_items']
+                        if summary_result.get('download_link'):
+                            result['download_link'] = summary_result['download_link']
+                    else:
+                        # fallback for legacy A2AMessage
+                        if hasattr(summary_result, 'parts'):
+                            for part in summary_result.parts:
+                                if getattr(part, 'content_type', None) == "text/plain":
+                                    summaries.append(part.content)
 
                 summaries_str = str(summaries)
                 print(f"[DEBUG] Summaries: {summaries_str[:100]}{'...' if len(summaries_str) > 100 else ''}")

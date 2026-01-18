@@ -86,7 +86,8 @@ chat_history = st.session_state['chat_history']
 if 'events' not in st.session_state:
     st.session_state['events'] = []
 events = st.session_state['events']
-mode = st.session_state.get('mode', 'default')
+# Always use the sidebar model choice as the mode
+mode = st.session_state.get('summarizer_model', 'BART')
 
 # --- Sidebar: Suggestions and History ---
 
@@ -365,12 +366,12 @@ if chat_input:
     if summarize_bart or summarize_mistral:
         model = "BART" if summarize_bart else "Mistral"
         processed_transcripts = st.session_state.get('processed_transcripts', [])
-        payload = {"query": f"summarize events", "mode": mode, "model": model}
+        # Always set mode to the selected model for backend
+        payload = {"query": f"summarize events", "mode": model, "model": model}
         if processed_transcripts:
             payload["processed_transcripts"] = processed_transcripts
-        #print(f"[DEBUG] Sending summarize payload: {payload}")
+        print(f"[DEBUG] Sending summarize payload: {payload}")
         last_result = _call_and_update(payload, chat_history, timeout=180)
-        # Only update the 'last_result' key in session state
         st.session_state['last_result'] = last_result
     elif process_idx is not None and events and 0 <= process_idx < len(events):
         event = events[process_idx]

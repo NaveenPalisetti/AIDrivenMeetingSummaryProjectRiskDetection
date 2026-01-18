@@ -17,7 +17,7 @@ def summarize_with_bart(tokenizer, model, transcript, meeting_id):
         except Exception as e:
             bart_summary = f"[BART summarization error: {e}]"
     # Use NLP-based structured extraction for action items
-    try:
+    try:        
         action_items = extract_tasks_structured(transcript, max_tasks=10)
     except Exception as e:
         action_items = []
