@@ -53,7 +53,7 @@ def get_dynamic_suggestions(chat_history, last_result, events):
 st.set_page_config(page_title="AI Orchestrator Client", layout="wide")
 API_URL = "http://localhost:8000/mcp/orchestrate"  # Use local URL for FastAPI backend in Colab
 
-st.title("🤖 AI-Driven Meeting Selected transcripts for preprocessingSummary & Risk Detection")
+st.title("🤖 AI-Driven Meeting Summary & Project Risk Management")
 st.caption("This app sends queries to the orchestrator API and displays the workflow results.")
 
 
@@ -91,7 +91,7 @@ with st.sidebar:
         last_result = last_entry['result']
         last_events = last_entry.get('events', [])
         suggestions = get_dynamic_suggestions(conversation, last_result, last_events)
-        sidebar_cmds = {"fetch events", "summarize selected events", "detect risks", "extract tasks", "create jira from action items", "process selected events"}
+        sidebar_cmds = {"fetch events", "summarize selected events", "create jira from action items", "process selected events"}
         filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
         if filtered:
             for s in filtered:
@@ -284,7 +284,7 @@ if results_history:
 else:
     suggestions = []
 with st.expander("Suggested Commands / Tips", expanded=False):
-    sidebar_cmds = {"fetch events", "summarize selected events", "detect risks", "extract tasks", "create jira from action items", "process selected events"}
+    sidebar_cmds = {"fetch events", "summarize selected events", "create jira from action items", "process selected events"}
     filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
     if filtered:
         st.markdown("**You can try these conversation commands:**")
@@ -319,17 +319,17 @@ if chat_input:
         payload = {"query": f"summarize events", "mode": mode, "model": model}
         if processed_transcripts:
             payload["processed_transcripts"] = processed_transcripts
-        last_result = _call_and_update(payload, chat_history, timeout=90)
+        last_result = _call_and_update(payload, chat_history, timeout=180)
     elif process_idx is not None and events and 0 <= process_idx < len(events):
         # User requested to process a specific event by order
         event = events[process_idx]
         event_id = event.get('id')
         if event_id:
             payload = {"query": f"process event {event_id}", "mode": mode}
-            last_result = _call_and_update(payload, chat_history, timeout=90)
+            last_result = _call_and_update(payload, chat_history, timeout=180)
     else:
         payload = {"query": chat_input, "mode": mode}
-        last_result = _call_and_update(payload, chat_history, timeout=90)
+        last_result = _call_and_update(payload, chat_history, timeout=180)
     # Extract events, transcripts, and processed_transcripts if present
     if last_result:
         if isinstance(last_result, dict):
@@ -478,7 +478,7 @@ if last_result:
 
 # Suggested commands help box
 with st.expander("Suggested Commands / Tips", expanded=False):
-    sidebar_cmds = {"fetch events", "summarize selected events", "detect risks", "extract tasks", "create jira from action items", "process selected events"}
+    sidebar_cmds = {"fetch events", "summarize selected events", "create jira from action items", "process selected events"}
     filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
     if filtered:
         st.markdown("**You can try these conversation commands:**")

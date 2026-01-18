@@ -1,3 +1,4 @@
+from mcp.tools.nlp_task_extraction import extract_tasks_structured
 def summarize_with_bart(tokenizer, model, transcript, meeting_id):
     if not transcript or len(transcript.split()) < 10:
         bart_summary = "Transcript too short for summarization."
@@ -15,10 +16,11 @@ def summarize_with_bart(tokenizer, model, transcript, meeting_id):
             bart_summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
         except Exception as e:
             bart_summary = f"[BART summarization error: {e}]"
-    # Improved rule-based extraction for action items
-    lines = [l.strip() for l in transcript.replace('\n', '. ').split('.') if l.strip()]
-    action_keywords = ['fix', 'complete', 'implement', 'create', 'update', 'assign', 'test', 'review', 'prepare', 'set up', 'ensure']
-    action_items = [l for l in lines if any(k in l.lower() for k in action_keywords)]
+    # Use NLP-based structured extraction for action items
+    try:
+        action_items = extract_tasks_structured(transcript, max_tasks=10)
+    except Exception as e:
+        action_items = []
     return {
         'meeting_id': meeting_id,
         'summary_text': bart_summary,
