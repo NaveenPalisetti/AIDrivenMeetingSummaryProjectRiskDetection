@@ -30,7 +30,7 @@ class OrchestratorAgent:
         self.tasks = {}
 
     @a2a_endpoint
-    def handle_query(self, query: str, selected_event_indices: list = None, mode: str = None, user: str = None, date: str = None, permissions: list = None, create_jira: bool = False, stage: str = "fetch", processed_transcripts: list = None) -> dict:
+    def handle_query(self, query: Any, selected_event_indices: list = None, mode: str = None, user: str = None, date: str = None, permissions: list = None, create_jira: bool = False, stage: str = "fetch", processed_transcripts: list = None, selected_action_items: list = None) -> dict:
         """
         Interactive, stepwise workflow for orchestrator:
         stage: 'fetch' | 'preprocess' | 'summarize' | 'jira' | 'risk' | 'notify'
@@ -48,6 +48,11 @@ class OrchestratorAgent:
         print(f"        query: {query}")
         # mode = "bart"  # Force BART mode regardless of input
         result = {"stage": stage}
+        # If selected_action_items is provided, merge it into query dict for downstream access
+        if selected_action_items is not None:
+            if not isinstance(query, dict):
+                query = {"query": query}
+            query["selected_action_items"] = selected_action_items
         try:
             # Optionally run the LangGraph workflow when enabled.
             use_workflow_env = os.environ.get("USE_LANGGRAPH_WORKFLOW")
@@ -310,9 +315,17 @@ class OrchestratorAgent:
 
             if stage == "jira":
                 print("[DEBUG] Stage: jira")
-                summaries = query.get('summaries', []) if isinstance(query, dict) else []
+                # Use selected_action_items if present, else fallback to summaries
+                selected_action_items = None
+                if isinstance(query, dict):
+                    selected_action_items = query.get('selected_action_items', None)
+                if selected_action_items:
+                    summaries = selected_action_items
+                    print(f"[DEBUG] Using selected_action_items for Jira: {summaries}")
+                else:
+                    summaries = query.get('summaries', []) if isinstance(query, dict) else []
+                    print(f"[DEBUG] Summaries for jira: {summaries}")
                 from mcp.agents.jira_agent import JiraAgent
-                print(f"[DEBUG] Summaries for jira: {summaries}")
                 jira_agent = JiraAgent()
                 jira_msg = A2AMessage(message_id=str(uuid.uuid4()), role="user")
                 jira_msg.add_part("application/json", {"summary": summaries, "user": user, "date": date})

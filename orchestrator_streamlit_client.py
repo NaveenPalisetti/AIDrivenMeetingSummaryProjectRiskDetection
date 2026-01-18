@@ -44,8 +44,20 @@ def get_dynamic_suggestions(chat_history, last_result, events):
         if last_result.get("summaries"):
             suggestions.append("detect risks")
             suggestions.append("extract tasks")
-        if last_result.get("action_items"):
+        action_items = last_result.get("action_items", [])
+        if action_items:
             suggestions.append("create jira from action items")
+            # Add context-specific commands for selective Jira creation
+            # Limit to top 3 action items for Jira creation
+            for idx, item in enumerate(action_items[:3]):
+                suggestions.append(f"create jira for action item {idx+1}")
+            # Add only 1 keyword-based suggestion from the first action item
+            if action_items:
+                item_str = str(action_items[0]) if not isinstance(action_items[0], str) else action_items[0]
+                keyword_match = re.search(r'\b\w{5,}\b', item_str)
+                if keyword_match:
+                    kw = keyword_match.group(0).lower()
+                    suggestions.append(f"create jira for action item containing '{kw}'")
     # Always suggest help
     suggestions.append("help")
     return suggestions
@@ -290,6 +302,23 @@ with st.expander("Suggested Commands / Tips", expanded=False):
         st.markdown("**You can try these conversation commands:**")
         for s in filtered:
             st.markdown(f"- {s}")
+
+# Top-level function for Jira command parsing
+def parse_create_jira_command(text, action_items):
+    # Match 'create jira for action item 2', 'create jira for action item containing "keyword"', etc.
+    match_num = re.search(r"create jira for action item (\d+)", text.lower())
+    if match_num and action_items:
+        idx = int(match_num.group(1)) - 1
+        if 0 <= idx < len(action_items):
+            return [action_items[idx]]
+    match_kw = re.search(r"create jira for action item containing ['\"]?([\w\s]+)['\"]?", text.lower())
+    if match_kw and action_items:
+        keyword = match_kw.group(1).strip().lower()
+        filtered = [item for item in action_items if keyword in item.lower()]
+        if filtered:
+            return filtered
+    return None
+
 def parse_process_event_command(text):
     # Match phrases like 'process the first event', 'process the 2nd event', etc.
     match = re.search(r"process the (\d+)(?:st|nd|rd|th)? event", text.lower())
@@ -305,28 +334,35 @@ def parse_process_event_command(text):
 
 if chat_input:
     chat_history.append({"role": "user", "content": chat_input})
-    # Check for summarization command
     summarize_bart = re.search(r"summarize events with bart", chat_input, re.IGNORECASE)
     summarize_mistral = re.search(r"summarize events with mistral", chat_input, re.IGNORECASE)
     process_idx = parse_process_event_command(chat_input)
     # Persist processed_transcripts in session state if present in last_result
     if 'processed_transcripts' not in st.session_state:
         st.session_state['processed_transcripts'] = []
+    # Get action items from last_result if available
+    action_items = []
+    if 'last_result' in st.session_state and isinstance(st.session_state['last_result'], dict):
+        action_items = st.session_state['last_result'].get('action_items', [])
+    selected_action_items = parse_create_jira_command(chat_input, action_items)
     if summarize_bart or summarize_mistral:
         model = "BART" if summarize_bart else "Mistral"
-        # Use processed_transcripts from session state if available
         processed_transcripts = st.session_state.get('processed_transcripts', [])
         payload = {"query": f"summarize events", "mode": mode, "model": model}
         if processed_transcripts:
             payload["processed_transcripts"] = processed_transcripts
         last_result = _call_and_update(payload, chat_history, timeout=180)
     elif process_idx is not None and events and 0 <= process_idx < len(events):
-        # User requested to process a specific event by order
         event = events[process_idx]
         event_id = event.get('id')
         if event_id:
             payload = {"query": f"process event {event_id}", "mode": mode}
             last_result = _call_and_update(payload, chat_history, timeout=180)
+    elif selected_action_items:
+        # User requested to create Jira for specific action items
+        # Send the actual user command in the query field, but always include selected_action_items
+        payload = {"query": chat_input, "mode": mode, "selected_action_items": selected_action_items}
+        last_result = _call_and_update(payload, chat_history, timeout=180)
     else:
         payload = {"query": chat_input, "mode": mode}
         last_result = _call_and_update(payload, chat_history, timeout=180)
@@ -341,7 +377,6 @@ if chat_input:
                 transcripts = last_result.get('calendar_transcripts', [])
             elif 'transcripts' in last_result:
                 transcripts = last_result.get('transcripts', [])
-            # Store processed_transcripts in session state for next step
             if 'processed_transcripts' in last_result and last_result['processed_transcripts']:
                 st.session_state['processed_transcripts'] = last_result['processed_transcripts']
 else:
