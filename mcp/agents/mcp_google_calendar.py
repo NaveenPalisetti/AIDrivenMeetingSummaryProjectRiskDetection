@@ -7,10 +7,12 @@ MCP Google Calendar Integration Tool
 - Returns transcript for summarization
 """
 
+
 import datetime
 import os
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from mcp.protocols.a2a import a2a_endpoint
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
@@ -31,6 +33,7 @@ class MCPGoogleCalendar:
             SERVICE_ACCOUNT_FILE, scopes=SCOPES)
         self.service = build('calendar', 'v3', credentials=self.creds)
 
+    @a2a_endpoint
     def fetch_events(self, start_time, end_time):
         events_result = self.service.events().list(
             calendarId=self.calendar_id,

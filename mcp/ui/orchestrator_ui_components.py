@@ -11,9 +11,14 @@ def display_risks(risks):
         risks = [risks]
     st.subheader("Detected Risks")
     for risk in risks:
-        desc = risk.get('description', str(risk))
-        sev = (risk.get('severity', '') or '').lower()
-        mid = risk.get('meeting_id', None)
+        if isinstance(risk, dict):
+            desc = risk.get('description', str(risk))
+            sev = (risk.get('severity', '') or '').lower()
+            mid = risk.get('meeting_id', None)
+        else:
+            desc = str(risk)
+            sev = ''
+            mid = None
         msg = f"**Severity:** {sev.capitalize()}\n**Description:** {desc}"
         if mid:
             msg += f"\n**Meeting ID:** {mid}"

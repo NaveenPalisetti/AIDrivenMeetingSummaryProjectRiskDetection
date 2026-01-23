@@ -6,19 +6,13 @@ Streamlit Orchestrator Client: A standalone Streamlit app that sends user querie
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-
-
-
+import json
 import streamlit as st
-import requests
 import re
 from mcp.ui.orchestrator_ui_components import (
-    event_selector, display_event_details, display_processed_transcripts, display_summaries, display_errors
+   display_risks, display_action_items, event_selector, display_event_details, display_processed_transcripts, display_summaries, display_errors
 )
 from mcp.ui.orchestrator_client import call_orchestrator
-import logging
-
-# --- Fallback get_dynamic_suggestions if not imported ---
 
 # Helper to get ordinal string (1st, 2nd, 3rd, ...)
 def ordinal(n):
@@ -42,8 +36,7 @@ def get_dynamic_suggestions(chat_history, last_result, events):
     # If last_result has summaries, suggest risk detection and extracting tasks
     if last_result and isinstance(last_result, dict):
         if last_result.get("summaries"):
-            suggestions.append("detect risks")
-            suggestions.append("extract tasks")
+            suggestions.append("detect risks")            
         action_items = last_result.get("action_items", [])
         if action_items:
             suggestions.append("create jira from action items")
@@ -63,12 +56,11 @@ def get_dynamic_suggestions(chat_history, last_result, events):
     suggestions.append("Show usage instructions")
     return suggestions
 
-st.set_page_config(page_title="AI Orchestrator Client", layout="wide")
+st.set_page_config(page_title="AI-Driven Meeting Summary & Project Risk Management", layout="wide")
 API_URL = "http://localhost:8000/mcp/orchestrate"  # Use local URL for FastAPI backend in Colab
 
 st.title("🤖 AI-Driven Meeting Summary & Project Risk Management")
 st.caption("This app sends queries to the orchestrator API and displays the workflow results.")
-
 
 
 # --- Ensure results_history is always initialized ---
@@ -90,7 +82,6 @@ events = st.session_state['events']
 mode = st.session_state.get('summarizer_model', 'BART')
 
 # --- Sidebar: Suggestions and History ---
-
 with st.sidebar:
     st.header("🧠 Summarizer Model")
     model_choice = st.radio("Choose a summarizer: ", ["BART", "Mistral"], key="summarizer_model")
@@ -116,8 +107,7 @@ with st.sidebar:
             "fetch events",
             "summarize events with BART",
             "summarize events with Mistral",
-            "detect risks",
-            "extract tasks",
+            "detect risks",            
             "create jira from action items"
         ]
         for s in starter_suggestions:
@@ -133,7 +123,7 @@ with st.sidebar:
         if entry['user']:
             st.markdown(f"**You:** {entry['user']}")
         if entry['result']:
-            st.markdown(f"**Orchestrator:** {str(entry['result'])[:100]}{'...' if len(str(entry['result']))>100 else ''}")
+            st.markdown(f"{str(entry['result'])[:100]}{'...' if len(str(entry['result']))>100 else ''}")
 
 
 
@@ -171,7 +161,7 @@ def _call_and_update(payload, chat_history, timeout=90):
             return None
 
 # Display persistent results history and dynamic suggestions
-import json
+
 def render_orchestrator_message(content):
     try:
         # Always try to parse string content to dict for consistent handling
@@ -186,7 +176,12 @@ def render_orchestrator_message(content):
             result = None
         if result and isinstance(result, dict):
             if result.get('stage') == 'fetch' and 'calendar_events' in result:
-                st.markdown(f"**Orchestrator:** Found {len(result.get('calendar_events', []))} recent meeting events. Use the table below to view details.")
+                num_events = len(result.get('calendar_events', []))
+                event_word = 'event' if num_events == 1 else 'events'
+                st.markdown(
+                    f"Found {num_events} recent meeting {event_word}. "
+                    "Use the table below to view details."
+                )
                 return
             # For summarize/process/preprocess, show summaries/action items if present, else show processing message
             if result.get('stage') in ['preprocess', 'process', 'summarize']:
@@ -203,17 +198,55 @@ def render_orchestrator_message(content):
                             display_summaries(summaries)
                     with cols[1]:
                         st.markdown("### Action Items")
-                        if action_items:
-                            from mcp.ui.orchestrator_ui_components import display_action_items
+                        if action_items:                            
                             display_action_items(action_items)
                     return
                 else:
-                    st.markdown(f"**Orchestrator:** Processing event...")
+                    st.markdown(f"Processing event...")
                     return
     except Exception:
         pass
     if not isinstance(content, dict):
-        st.markdown(f"**Orchestrator:** {content}")
+        st.markdown(f"{content}")
+def parse_create_jira_command(text, action_items):
+    # Match 'create jira for action item 2', 'create jira for action item containing "keyword"', etc.
+    # Normalize input
+    text = text.strip().replace('\n', ' ')
+    match_num = re.search(r"create jira for action item (\d+)", text.lower())
+    if match_num and action_items:
+        idx = int(match_num.group(1)) - 1
+        if 0 <= idx < len(action_items):
+            item = action_items[idx]
+            #print(f"[DEBUG] parse_create_jira_command returning: {[item]}")
+            return [item]  # Return full dict for mapping
+    match_kw = re.search(r"create jira for action item containing ['\"]?([\w\s]+)['\"]?", text.lower())
+    if match_kw and action_items:
+        keyword = match_kw.group(1).strip().lower()
+        filtered = []
+        for item in action_items:
+            item_str = item.get('title', str(item)) if isinstance(item, dict) else str(item)
+            if keyword in item_str.lower():
+                filtered.append(item)
+        if filtered:
+            #print(f"[DEBUG] parse_create_jira_command returning: {filtered}")
+            return filtered
+    #print("[DEBUG] parse_create_jira_command returning: None")
+    return None
+
+def parse_process_event_command(text):
+    # Match phrases like 'process the first event', 'process the 2nd event', etc.
+    match = re.search(r"process the (\d+)(?:st|nd|rd|th)? event", text.lower())
+    if match:
+        idx = int(match.group(1)) - 1
+        return idx
+    # Also support 'process first event', 'process second event', etc.
+    words = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"]
+    for i, w in enumerate(words):
+        if f"process the {w} event" in text.lower() or f"process {w} event" in text.lower():
+            return i
+    return None
+
+
 
 # Render the full conversation and results history
 #st.write("[DEBUG] Rendering results history...", results_history)
@@ -223,7 +256,7 @@ for entry in results_history:
     render_orchestrator_message(entry['result'])
     # Show events table if present
     if entry.get('events'):
-        st.markdown(f"**Fetched {len(entry['events'])} Events**")
+        st.markdown(f"Fetched {len(entry['events'])} Events")
         event_rows = []
         for ev in entry['events']:
             row = {}
@@ -248,8 +281,7 @@ for entry in results_history:
                 display_summaries(summaries)
         with cols[1]:
             st.markdown("### Action Items")
-            if action_items:
-                from mcp.ui.orchestrator_ui_components import display_action_items
+            if action_items:                
                 display_action_items(action_items)
     # --- Show warning if no summaries returned after summarize command ---
     if (
@@ -258,15 +290,18 @@ for entry in results_history:
         and isinstance(entry.get('user', ''), str)
         and 'summarize' in entry.get('user', '').lower()
     ):
-        st.warning("No summaries were returned by the orchestrator. Please check the backend or try again.")
+        st.warning("No summaries were returned. Please check the backend or try again.")
     # Show processed transcripts if present
+    print(" [DEBUG] Checking if result is a dict for processed transcripts...", isinstance(result, dict))
+
     if isinstance(result, dict) and result.get("processed_transcripts"):
         with st.expander("Processed Transcripts"):
             processed = result.get("processed_transcripts", [])
             display_processed_transcripts(processed)
     # Show agent states and outputs if present
-    if isinstance(result, dict) and (
-        result.get('preproc_task_state') or result.get('preproc_response') or result.get('summ_task_state') or result.get('summ_response') or result.get('jira') or result.get('risk')):
+    
+    if isinstance(result, dict) and (result.get('preproc_task_state') or result.get('preproc_response') or result.get('summ_task_state') or result.get('summ_response') or result.get('jira') or result.get('risk')):
+        print("[DEBUG] Showing Agent States & Outputs expander for result:", result)
         with st.expander("Agent States & Outputs"):
             if 'preproc_task_state' in result:
                 st.info(f"Preprocessing Task State: {result['preproc_task_state']}")
@@ -310,43 +345,7 @@ if results_history:
 else:
     suggestions = []
 # Top-level function for Jira command parsing
-def parse_create_jira_command(text, action_items):
-    # Match 'create jira for action item 2', 'create jira for action item containing "keyword"', etc.
-    # Normalize input
-    text = text.strip().replace('\n', ' ')
-    match_num = re.search(r"create jira for action item (\d+)", text.lower())
-    if match_num and action_items:
-        idx = int(match_num.group(1)) - 1
-        if 0 <= idx < len(action_items):
-            item = action_items[idx]
-            #print(f"[DEBUG] parse_create_jira_command returning: {[item]}")
-            return [item]  # Return full dict for mapping
-    match_kw = re.search(r"create jira for action item containing ['\"]?([\w\s]+)['\"]?", text.lower())
-    if match_kw and action_items:
-        keyword = match_kw.group(1).strip().lower()
-        filtered = []
-        for item in action_items:
-            item_str = item.get('title', str(item)) if isinstance(item, dict) else str(item)
-            if keyword in item_str.lower():
-                filtered.append(item)
-        if filtered:
-            #print(f"[DEBUG] parse_create_jira_command returning: {filtered}")
-            return filtered
-    #print("[DEBUG] parse_create_jira_command returning: None")
-    return None
 
-def parse_process_event_command(text):
-    # Match phrases like 'process the first event', 'process the 2nd event', etc.
-    match = re.search(r"process the (\d+)(?:st|nd|rd|th)? event", text.lower())
-    if match:
-        idx = int(match.group(1)) - 1
-        return idx
-    # Also support 'process first event', 'process second event', etc.
-    words = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"]
-    for i, w in enumerate(words):
-        if f"process the {w} event" in text.lower() or f"process {w} event" in text.lower():
-            return i
-    return None
 
 if chat_input:
     chat_history.append({"role": "user", "content": chat_input})
@@ -501,9 +500,9 @@ if last_result:
                         pass
             elif isinstance(risk_obj, dict):
                 if 'detected_risks' in risk_obj:
-                    detected_risks = risk_obj['detected_risks']
-            from mcp.ui.orchestrator_ui_components import display_risks
+                    detected_risks = risk_obj['detected_risks']            
             if detected_risks:
+                print("[DEBUG] detected_risks:", detected_risks)
                 display_risks(detected_risks)
             else:
                 st.info("No risks detected.")
@@ -526,11 +525,9 @@ if last_result and "processed_transcripts" in last_result:
                 display_summaries(summaries)
         with cols[1]:
             st.markdown("### Action Items")
-            if action_items:
-                from mcp.ui.orchestrator_ui_components import display_action_items
+            if action_items:                
                 display_action_items(action_items)
-    if last_result.get("action_items"):
-        from mcp.ui.orchestrator_ui_components import display_action_items
+    if last_result.get("action_items"):        
         st.markdown("## Action Items")
         action_items = last_result.get("action_items", [])
         display_action_items(action_items)
@@ -563,6 +560,7 @@ if last_result:
 
 # Suggested commands help box
 with st.expander("Suggested Commands / Tips", expanded=False):
+    print(" [DEBUG] Showing suggested commands...", suggestions)
     sidebar_cmds = {"fetch events", "summarize selected events", "create jira from action items", "process selected events"}
     filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
     if filtered:

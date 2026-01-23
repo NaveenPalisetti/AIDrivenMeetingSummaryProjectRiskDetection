@@ -106,46 +106,27 @@ class OrchestratorAgent:
                     print(f"[WARN] LangGraph workflow failed: {e}")
 
             if stage == "fetch":
-                print("[DEBUG] Stage: fetch")
-                # Use LangChain calendar tool by default when available; env var can disable
-                use_lc_env = os.environ.get("USE_LANGCHAIN_TOOLS")
-                if use_lc_env is None:
-                    use_lc = hasattr(lc_tools, 'fetch_calendar_events_tool')
-                else:
-                    use_lc = use_lc_env == "1"
+                print("[DEBUG] Stage: fetch (A2A uniform)")
                 import datetime
                 now = datetime.datetime.utcnow()
                 start_time = now - datetime.timedelta(days=37)
                 end_time = now + datetime.timedelta(days=1)
-                print(f"[DEBUG] use_lc: {use_lc}")
-                if use_lc and hasattr(lc_tools, 'fetch_calendar_events_tool'):
-                    try:
-                        print("[DEBUG] Invoking LangChain fetch_calendar_events_tool...")
-                        inv = invoke_tool(lc_tools.fetch_calendar_events_tool, payload={"user_id": user, "date_range": f"{start_time.isoformat()}/{end_time.isoformat()}"})
-                        print(f"[DEBUG] fetch_calendar_events_tool result: {inv}")
-                        if inv.get('status') == 'ok':
-                            res = inv.get('result')
-                            events = res.get('events', [])
-                            transcripts = res.get('transcript', []) if isinstance(res.get('transcript', []), list) else [res.get('transcript', '')]
-                        else:
-                            raise RuntimeError(inv.get('error'))
-                    except Exception:
-                        print("[DEBUG] Falling back to MCPGoogleCalendar for fetch events.")
-                        cal = MCPGoogleCalendar(calendar_id="primary")
-                        events = cal.fetch_events(start_time, end_time)
-                        transcripts = cal.get_transcripts_from_events(events)
-                else:
-                    print("[DEBUG] Using MCPGoogleCalendar for fetch events.")
-                    cal = MCPGoogleCalendar(calendar_id="primary")
-                    events = cal.fetch_events(start_time, end_time)
+                cal = MCPGoogleCalendar(calendar_id="primary")
+                fetch_payload = {"start_time": start_time, "end_time": end_time}
+                fetch_response = a2a_request(cal.fetch_events, fetch_payload)
+                if fetch_response.get("status") == "ok":
+                    events = fetch_response["result"]
                     transcripts = cal.get_transcripts_from_events(events)
+                else:
+                    print(f"[ERROR] Calendar fetch failed: {fetch_response.get('error')}")
+                    events = []
+                    transcripts = []
                 print(f"[DEBUG] Events fetched: {len(events)}; Transcripts fetched: {len(transcripts)}")
                 result['calendar_events'] = events
                 result['calendar_transcripts'] = transcripts
                 result['event_count'] = len(events)
                 result['transcript_count'] = len(transcripts)
                 result['next_actions'] = ["preprocess"]
-                #print(f"[DEBUG] Fetch result: {result}")
                 return result
 
             if stage == "preprocess":
@@ -547,7 +528,3 @@ class OrchestratorAgent:
                     results[agent] = {"error": str(e)}
         return results
 
-# Example usage:
-# orchestrator = OrchestratorAgent()
-# result = orchestrator.handle_query("Please summarize and create jira", "alice", date="2026-01-09", permissions=["summary", "jira"])
-# print(result)
