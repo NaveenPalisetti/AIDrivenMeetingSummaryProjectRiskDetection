@@ -569,3 +569,13 @@ if last_result:
 
 
 
+# Suggested commands help box
+with st.expander("Suggested Commands / Tips", expanded=False):
+    sidebar_cmds = {"fetch events", "summarize selected events", "create jira from action items", "process selected events"}
+    filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
+    if filtered:
+        st.markdown("**You can try these conversation commands:**")
+        for s in filtered:
+            st.markdown(f"- {s}")
+
+
