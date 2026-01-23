@@ -309,14 +309,6 @@ if results_history:
     )
 else:
     suggestions = []
-with st.expander("Suggested Commands / Tips", expanded=False):
-    sidebar_cmds = {"fetch events", "summarize selected events", "create jira from action items", "process selected events"}
-    filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
-    if filtered:
-        st.markdown("**You can try these conversation commands:**")
-        for s in filtered:
-            st.markdown(f"- {s}")
-
 # Top-level function for Jira command parsing
 def parse_create_jira_command(text, action_items):
     # Match 'create jira for action item 2', 'create jira for action item containing "keyword"', etc.
