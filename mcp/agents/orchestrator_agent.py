@@ -499,6 +499,40 @@ class OrchestratorAgent:
                     print(f"[DEBUG] Notify result: {result}")
                     return result
 
+            # --- Custom: Map user query to specific field and return only that field if requested ---
+            # Only do this for 'fetch' and 'summarize' stages (where result has summaries, action_items, etc.)
+            try:
+                if stage in ("fetch", "summarize") and isinstance(query, str):
+                    field_map = {
+                        "decision": "decisions",
+                        "decisions": "decisions",
+                        "action item": "action_items",
+                        "action items": "action_items",
+                        "risk": "risks",
+                        "risks": "risks",
+                        "concern": "concerns",
+                        "concerns": "concerns",
+                        "follow up": "follow_up_questions",
+                        "follow-up": "follow_up_questions",
+                        "question": "follow_up_questions",
+                        "summary": "summaries",
+                    }
+                    for key, field in field_map.items():
+                        if key in query.lower():
+                            # Try to get the field from result or from the first summary dict
+                            value = result.get(field)
+                            if value is None and result.get('summaries') and isinstance(result['summaries'], list):
+                                # Try to get from the first summary dict if present
+                                first = result['summaries'][0]
+                                if isinstance(first, dict):
+                                    value = first.get(field)
+                            # If still None, fallback to empty list
+                            if value is None:
+                                value = []
+                            # Return only the requested field
+                            return {field: value, 'stage': stage}
+            except Exception as e:
+                print(f"[ERROR] Exception in query-to-field mapping: {e}")
             print(f"[DEBUG] Unknown stage encountered: {stage}")
             result['error'] = f"Unknown stage: {stage}"
             print(f"[DEBUG] Error result: {result}")
