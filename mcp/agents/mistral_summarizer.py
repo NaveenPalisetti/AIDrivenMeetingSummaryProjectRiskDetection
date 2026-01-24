@@ -118,6 +118,12 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
             return None
 
         json_str = extract_last_json(mistral_output)
+        # Always initialize these to avoid UnboundLocalError
+        summary_text = []
+        action_items = []
+        decisions = []
+        risks = []
+        follow_up_questions = []
         if json_str:
             print(f"[Mistral][Chunk {idx+1}] JSON block found in output.")
             try:
@@ -135,11 +141,6 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
                 print(f"[Mistral][Chunk {idx+1}] Parsed follow_up_questions: {follow_up_questions}")
             except Exception as e:
                 print(f"[Mistral][Chunk {idx+1}] JSON parsing error: {e}")
-                summary_text = []
-                action_items = []
-                decisions = []
-                risks = []
-                follow_up_questions = []
         else:
             print(f"[Mistral][Chunk {idx+1}] No JSON block found in output.")
             summary_text = []
