@@ -28,35 +28,31 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
     for idx, chunk in enumerate(transcript_chunks):
         print(f"[Mistral][Chunk {idx+1}] Processing chunk of length {len(chunk.split())} words.")
         mistral_prompt = (
-            "You are an AI specialized in analyzing meeting transcripts.\n"
-            "Your task is to produce:\n"
-            "1. A clear and concise SUMMARY of the meeting as a numbered or bulleted list (do not use 'point 1', 'point 2', use real content).\n"
-            "2. A list of ACTION ITEMS, each with the following fields: summary (short description), assignee (person responsible), issue_type (Story or Task), story_points (if mentioned), and due_date (if mentioned).\n"
-            "3. A list of DECISIONS made during the meeting.\n"
-            "4. A list of RISKS, blockers, or concerns raised.\n"
-            "5. A list of FOLLOW-UP QUESTIONS that attendees should clarify.\n"
+            "Role: You are a Senior Technical Analyst. Your goal is to synthesize meeting transcripts into a structured JSON schema for a project management dashboard.\n"
             "\n"
-            "INSTRUCTIONS:\n"
-            "- Read the provided meeting transcript thoroughly.\n"
-            "- Do NOT invent information. Only extract what is explicitly or implicitly present.\n"
-            "- If some sections have no information, return an empty list.\n"
-            "- Keep summary short but complete (5–8 bullet points or numbers).\n"
-            "- Use simple, business-friendly language.\n"
-            "- DO NOT use placeholder text like 'point 1', 'point 2', '<summary bullet 1>', '<task>', etc.\n"
-            "- DO NOT copy the example below. Fill with real meeting content.\n"
+            "Task: Analyze the provided meeting transcript and extract the following fields into a valid JSON object:\n"
+            "Metadata: Meeting ID, Project Name, Topic, and Sprint Number.\n"
+            "Agenda: A bulleted list of the technical goals discussed.\n"
+            "Participants: A list of the attendees and their roles.\n"
+            "Summary Points: High-level takeaways focusing on technical decisions (MQL logic, JPO refactors, UI state).\n"
+            "Risk Factors: Potential technical or process bottlenecks identified during the conversation.\n"
+            "Action Items: A detailed array of objects. Use issue_type: 'Story' for major feature creation and 'Task' or 'Bug' for technical sub-work. Include: summary, assignee, and a logical due_date.\n"
+            "\n"
+            "Constraints:\n"
+            "- The JSON must be strictly formatted for machine readability.\n"
+            "- Technical terminology (JPO, MQL, REST, Triggers) must be preserved.\n"
+            "- Ensure 'Story' actions are created at the start of new phases.\n"
             "\n"
             "RETURN THE OUTPUT IN THIS EXACT JSON FORMAT (as a code block):\n"
             "```json\n"
             "{\n"
-            "  \"summary\": [\"<summary bullet 1>\", \"<summary bullet 2>\"],\n"
+            "  \"metadata\": {\"meeting_id\": \"\", \"project\": \"\", \"topic\": \"\", \"sprint\": \"\"},\n"
+            "  \"agenda\": [\"<goal 1>\", \"<goal 2>\", ...],\n"
+            "  \"participants\": [{\"name\": \"\", \"role\": \"\"}, ...],\n"
+            "  \"summary_points\": [\"<point 1>\", ...],\n"
+            "  \"risk_factors\": [\"<risk 1>\", ...],\n"
             "  \"action_items\": [\n"
-            "    {\n"
-            "      \"summary\": \"<short description>\",\n"
-            "      \"assignee\": \"<person>\",\n"
-            "      \"issue_type\": \"<Story or Task>\",\n"
-            "      \"story_points\": <number or null>,\n"
-            "      \"due_date\": \"<YYYY-MM-DD or Not mentioned>\"\n"
-            "    }\n"
+            "    {\"summary\": \"\", \"assignee\": \"\", \"issue_type\": \"\", \"due_date\": \"\"}\n"
             "  ]\n"
             "}\n"
             "```\n"
@@ -175,10 +171,23 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
 
     # print(f"[Mistral] FINAL all_summaries: {all_summaries}")
     # print(f"[Mistral] FINAL all_action_items: {all_action_items}")
-    print(f"[Mistral] FINAL all_summaries: {all_summaries}")
-    print(f"[Mistral] FINAL all_action_items: {all_action_items}")
+    # Deduplicate summaries and action items
+    def dedup_list(items):
+        seen = set()
+        deduped = []
+        for item in items:
+            key = json.dumps(item, sort_keys=True) if isinstance(item, dict) else str(item).strip().lower()
+            if key not in seen:
+                seen.add(key)
+                deduped.append(item)
+        return deduped
+
+    deduped_summaries = dedup_list(all_summaries)
+    deduped_action_items = dedup_list(all_action_items)
+    print(f"[Mistral] FINAL deduped_summaries: {deduped_summaries}")
+    print(f"[Mistral] FINAL deduped_action_items: {deduped_action_items}")
     return {
         'meeting_id': meeting_id,
-        'summary_text': all_summaries,
-        'action_items': all_action_items
+        'summary_text': deduped_summaries,
+        'action_items': deduped_action_items
     }

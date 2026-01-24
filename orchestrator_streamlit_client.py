@@ -505,14 +505,25 @@ Use the sidebar for suggestions and history. Use the 'Clear History' button to r
             model = "Mistral"
         if 0 <= idx < len(events):
             selected_event = events[idx]
-            transcript = selected_event.get('description', '') or selected_event.get('summary', '')
-            payload = {
-                "query": f"summarize the {idx+1}{ordinal(idx+1)[-2:]} event with {model}",
-                "mode": model,
-                "model": model,
-                "selected_event_indices": [idx],
-                "processed_transcripts": [transcript]
-            }
+            # Use processed_transcripts from session state if available, else fall back to event transcript
+            processed_transcripts = st.session_state.get('processed_transcripts', [])
+            if processed_transcripts:
+                payload = {
+                    "query": f"summarize the {idx+1}{ordinal(idx+1)[-2:]} event with {model}",
+                    "mode": model,
+                    "model": model,
+                    "selected_event_indices": [idx],
+                    "processed_transcripts": processed_transcripts
+                }
+            else:
+                transcript = selected_event.get('description', '') or selected_event.get('summary', '')
+                payload = {
+                    "query": f"summarize the {idx+1}{ordinal(idx+1)[-2:]} event with {model}",
+                    "mode": model,
+                    "model": model,
+                    "selected_event_indices": [idx],
+                    "processed_transcripts": [transcript]
+                }
             timeout_val = 3000 if model == "Mistral" else 1000
             last_result = _call_and_update(payload, chat_history, timeout=timeout_val)
             st.session_state['last_result'] = last_result
