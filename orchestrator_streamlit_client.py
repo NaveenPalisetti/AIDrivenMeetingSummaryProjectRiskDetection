@@ -415,15 +415,14 @@ if chat_input:
     chat_history.append({"role": "user", "content": chat_input})
     summarize_bart = re.search(r"summarize events with bart", chat_input, re.IGNORECASE)
     summarize_mistral = re.search(r"summarize events with mistral", chat_input, re.IGNORECASE)
-    summarize_nth_event_bart = re.search(r"summarize the (\d+)(?:st|nd|rd|th)? event with bart", chat_input.lower())
-    # Fallback: support 'summarize 2nd event with BART' (without 'the')
-    summarize_nth_event_bart_alt = re.search(r"summarize (\d+)(?:st|nd|rd|th)? event with bart", chat_input.lower())
+    # Use regex that allows for extra spaces between words
+    summarize_nth_event_bart = re.search(r"summarize\s+the\s+(\d+)(?:st|nd|rd|th)?\s+event\s+with\s+bart", chat_input.lower())
+    summarize_nth_event_bart_alt = re.search(r"summarize\s+(\d+)(?:st|nd|rd|th)?\s+event\s+with\s+bart", chat_input.lower())
     if not summarize_nth_event_bart and summarize_nth_event_bart_alt:
         summarize_nth_event_bart = summarize_nth_event_bart_alt
 
-    # Add support for 'summarize Nth event with Mistral'
-    summarize_nth_event_mistral = re.search(r"summarize the (\d+)(?:st|nd|rd|th)? event with mistral", chat_input.lower())
-    summarize_nth_event_mistral_alt = re.search(r"summarize (\d+)(?:st|nd|rd|th)? event with mistral", chat_input.lower())
+    summarize_nth_event_mistral = re.search(r"summarize\s+the\s+(\d+)(?:st|nd|rd|th)?\s+event\s+with\s+mistral", chat_input.lower())
+    summarize_nth_event_mistral_alt = re.search(r"summarize\s+(\d+)(?:st|nd|rd|th)?\s+event\s+with\s+mistral", chat_input.lower())
     if not summarize_nth_event_mistral and summarize_nth_event_mistral_alt:
         summarize_nth_event_mistral = summarize_nth_event_mistral_alt
     process_event_ref = parse_process_event_command(chat_input)
