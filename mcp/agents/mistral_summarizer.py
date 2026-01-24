@@ -3,24 +3,35 @@ import json
 import torch
 
 def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting_id):
-    # Always expect a string transcript, chunk internally
     print("[Mistral] summarize_with_mistral called. Meeting ID:", meeting_id)
-    if not transcript or not isinstance(transcript, str) or len(transcript.split()) < 10:
-        print("[Mistral] Transcript too short for summarization.")
-        return {
-            'meeting_id': meeting_id,
-            'summary_text': "Transcript too short for summarization.",
-            'action_items': []
-        }
-    def chunk_text(text, max_words=900):
-        words = text.split()
-        chunks = []
-        for i in range(0, len(words), max_words):
-            chunk = ' '.join(words[i:i+max_words])
-            chunks.append(chunk)
-        return chunks
-    transcript_chunks = chunk_text(transcript, max_words=900)
-    print(f"[Mistral] Transcript split into {len(transcript_chunks)} chunk(s).")
+    # Accept either a string (single transcript) or a list (pre-chunked)
+    if isinstance(transcript, list):
+        transcript_chunks = [t for t in transcript if t and isinstance(t, str) and len(t.split()) >= 10]
+        print(f"[Mistral] Received transcript as list. {len(transcript_chunks)} valid chunks.")
+        if not transcript_chunks:
+            print("[Mistral] No valid transcript chunks for summarization.")
+            return {
+                'meeting_id': meeting_id,
+                'summary_text': "Transcript too short for summarization.",
+                'action_items': []
+            }
+    else:
+        if not transcript or not isinstance(transcript, str) or len(transcript.split()) < 10:
+            print("[Mistral] Transcript too short for summarization.")
+            return {
+                'meeting_id': meeting_id,
+                'summary_text': "Transcript too short for summarization.",
+                'action_items': []
+            }
+        def chunk_text(text, max_words=900):
+            words = text.split()
+            chunks = []
+            for i in range(0, len(words), max_words):
+                chunk = ' '.join(words[i:i+max_words])
+                chunks.append(chunk)
+            return chunks
+        transcript_chunks = chunk_text(transcript, max_words=900)
+        print(f"[Mistral] Transcript split into {len(transcript_chunks)} chunk(s).")
 
     all_summaries = []
     all_action_items = []
