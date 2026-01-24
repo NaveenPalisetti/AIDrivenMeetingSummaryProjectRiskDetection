@@ -62,6 +62,57 @@ API_URL = "http://localhost:8000/mcp/orchestrate"  # Use local URL for FastAPI b
 st.title("🤖 AI-Driven Meeting Summary & Project Risk Management")
 st.caption("This app sends queries to the orchestrator API and displays the workflow results.")
 
+# --- Google Calendar Event Creator Section ---
+from mcp.agents.mcp_google_calendar import MCPGoogleCalendar
+from mcp.protocols.a2a import a2a_request
+
+import datetime
+if 'show_event_form' not in st.session_state:
+    st.session_state['show_event_form'] = False
+
+if not st.session_state['show_event_form']:
+    if st.button("➕ New Google Calendar Event"):
+        st.session_state['show_event_form'] = True
+
+if st.session_state['show_event_form']:
+    st.markdown("## 📅 Create Google Calendar Event")
+    with st.form("event_form"):
+        title = st.text_input("Event Title")
+        description = st.text_area("Description")
+        location = st.text_input("Location")
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Start Date", value=datetime.date.today())
+            start_time = st.time_input("Start Time", value=datetime.time(9, 0))
+        with col2:
+            end_date = st.date_input("End Date", value=datetime.date.today())
+            end_time = st.time_input("End Time", value=datetime.time(10, 0))
+        attendees = st.text_area("Attendees (comma-separated emails)")
+        submitted = st.form_submit_button("📅 Create Google Event")
+    if submitted:
+        # Combine date and time into ISO format with UTC offset (assume UTC for simplicity)
+        start_dt = datetime.datetime.combine(start_date, start_time).isoformat() + "+00:00"
+        end_dt = datetime.datetime.combine(end_date, end_time).isoformat() + "+00:00"
+        event_data = {
+            "summary": title,
+            "location": location,
+            "description": description,
+            "start": {"dateTime": start_dt, "timeZone": "UTC"},
+            "end": {"dateTime": end_dt, "timeZone": "UTC"},
+            "attendees": [{"email": email.strip()} for email in attendees.split(",") if email.strip()],
+        }
+        try:
+            calendar_agent = MCPGoogleCalendar()
+            # Use a2a_request with the correct signature
+            response = a2a_request(calendar_agent.create_event, {"event_data": event_data})
+            if response.get("status") == "ok" and isinstance(response.get("result"), dict) and "id" in response["result"]:
+                st.success(f"Event created: {response['result'].get('id')}")
+                st.session_state['show_event_form'] = False
+            else:
+                st.error(f"Failed to create event. {response.get('error', 'Please check your input.')}")
+        except Exception as e:
+            st.error(f"Error creating event: {e}")
+
 
 # --- Ensure results_history is always initialized ---
 if 'results_history' not in st.session_state:
@@ -78,6 +129,10 @@ chat_history = st.session_state['chat_history']
 if 'events' not in st.session_state:
     st.session_state['events'] = []
 events = st.session_state['events']
+# Debug: print events list and length right after loading from session state
+#print(f"[DEBUG UI] events loaded from session_state: length={len(events)}")
+#for idx, ev in enumerate(events):
+   #print(f"[DEBUG UI] event[{idx}]: id={ev.get('id', 'N/A')}, title={ev.get('summary', 'N/A')}")
 # Always use the sidebar model choice as the mode
 mode = st.session_state.get('summarizer_model', 'BART')
 
@@ -150,7 +205,7 @@ st.markdown(
 # Remove old _call_and_update definition (now replaced by the new one with timeout)
 
 # New _call_and_update function with timeout
-def _call_and_update(payload, chat_history, timeout=90):    
+def _call_and_update(payload, chat_history, timeout=1000):    
     with st.spinner("Processing your request..."):
         try:
             result = call_orchestrator(API_URL, payload, timeout=timeout)
@@ -234,16 +289,30 @@ def parse_create_jira_command(text, action_items):
     return None
 
 def parse_process_event_command(text):
-    # Match phrases like 'process the first event', 'process the 2nd event', etc.
+    # Support by index (ordinal or number)
     match = re.search(r"process the (\d+)(?:st|nd|rd|th)? event", text.lower())
     if match:
         idx = int(match.group(1)) - 1
-        return idx
-    # Also support 'process first event', 'process second event', etc.
+        return {"type": "index", "value": idx}
     words = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"]
     for i, w in enumerate(words):
         if f"process the {w} event" in text.lower() or f"process {w} event" in text.lower():
-            return i
+            return {"type": "index", "value": i}
+    # Support by event ID
+    match_id = re.search(r"process event ([a-z0-9]+)", text.lower())
+    if match_id:
+        return {"type": "id", "value": match_id.group(1)}
+    # Support by title (case-insensitive, partial match)
+    match_title = re.search(r"process event titled ['\"]?(.+?)['\"]?$", text.lower())
+    if match_title:
+        return {"type": "title", "value": match_title.group(1).strip()}
+    # Support 'process <title> event' or 'process <title>'
+    match_title2 = re.search(r"process ([\w\s]+?) event$", text.lower())
+    if match_title2:
+        return {"type": "title", "value": match_title2.group(1).strip()}
+    match_title3 = re.search(r"process ([\w\s]+)$", text.lower())
+    if match_title3 and not match_title3.group(1).strip().isdigit():
+        return {"type": "title", "value": match_title3.group(1).strip()}
     return None
 
 
@@ -259,13 +328,14 @@ for entry in results_history:
         st.markdown(f"Fetched {len(entry['events'])} Events")
         event_rows = []
         for ev in entry['events']:
-            row = {}
-            if 'id' in ev:
-                row['id'] = ev['id']
-            if 'summary' in ev:
-                row['summary'] = ev['summary']
+            row = {
+                'Title': ev.get('summary', ''),
+                'Start': ev.get('start', {}).get('dateTime', ev.get('start', {}).get('date', 'N/A')),
+                'End': ev.get('end', {}).get('dateTime', ev.get('end', {}).get('date', 'N/A')),
+                'Event ID': ev.get('id', '')
+            }
             event_rows.append(row)
-        st.table(event_rows)
+        st.dataframe(event_rows, use_container_width=True)
     # Show summaries and action items if present
     result = entry['result']
     if isinstance(result, dict) and result.get('summaries'):
@@ -292,7 +362,7 @@ for entry in results_history:
     ):
         st.warning("No summaries were returned. Please check the backend or try again.")
     # Show processed transcripts if present
-    print(" [DEBUG] Checking if result is a dict for processed transcripts...", isinstance(result, dict))
+    #print(" [DEBUG] Checking if result is a dict for processed transcripts...", isinstance(result, dict))
 
     if isinstance(result, dict) and result.get("processed_transcripts"):
         with st.expander("Processed Transcripts"):
@@ -301,7 +371,7 @@ for entry in results_history:
     # Show agent states and outputs if present
     
     if isinstance(result, dict) and (result.get('preproc_task_state') or result.get('preproc_response') or result.get('summ_task_state') or result.get('summ_response') or result.get('jira') or result.get('risk')):
-        print("[DEBUG] Showing Agent States & Outputs expander for result:", result)
+        #print("[DEBUG] Showing Agent States & Outputs expander for result:", result)
         with st.expander("Agent States & Outputs"):
             if 'preproc_task_state' in result:
                 st.info(f"Preprocessing Task State: {result['preproc_task_state']}")
@@ -322,7 +392,7 @@ for entry in results_history:
                     st.write(result['risk_task_state'])
                 st.json(result['risk'])
     # Show errors if present
-    print("[DEBUG] Checking for errors to display...",isinstance(result, dict))
+    #print("[DEBUG] Checking for errors to display...",isinstance(result, dict))
     if isinstance(result, dict):
         with st.expander("Errors & Debug Info"):
             display_errors(result)
@@ -351,9 +421,20 @@ if chat_input:
     chat_history.append({"role": "user", "content": chat_input})
     summarize_bart = re.search(r"summarize events with bart", chat_input, re.IGNORECASE)
     summarize_mistral = re.search(r"summarize events with mistral", chat_input, re.IGNORECASE)
-    process_idx = parse_process_event_command(chat_input)
-    # Persist processed_transcripts in session state if present in last_result
+    summarize_nth_event = re.search(r"summarize the (\d+)(?:st|nd|rd|th)? event with bart", chat_input.lower())
+    # Fallback: support 'summarize 2nd event with BART' (without 'the')
+    summarize_nth_event_alt = re.search(r"summarize (\d+)(?:st|nd|rd|th)? event with bart", chat_input.lower())
+    if not summarize_nth_event and summarize_nth_event_alt:
+        summarize_nth_event = summarize_nth_event_alt
+    process_event_ref = parse_process_event_command(chat_input)
+    #print(f"[DEBUG UI] chat_input: {chat_input}")
+    #print(f"[DEBUG UI] process_event_ref: {process_event_ref}")
+
+
+    # Persist processed_transcripts in session state if present in last_result    
     if 'processed_transcripts' not in st.session_state:
+        print("[DEBUG] Initializing processed_transcripts in session_state")
+
         st.session_state['processed_transcripts'] = []
     # Get action items from last_result if available
     action_items = []
@@ -389,39 +470,128 @@ Use the sidebar for suggestions and history. Use the 'Clear History' button to r
         """)
         # Do not process further if help was requested
         st.stop()
-    if summarize_bart or summarize_mistral:
+    print(f"[DEBUG UI] Processing chat input: {chat_input}",process_event_ref)
+    print(f"[DEBUG UI] Processing chat input: {chat_input} | Number of e,vents: {len(events)}")
+    
+    if summarize_nth_event:
+        idx = int(summarize_nth_event.group(1)) - 1
+        model = "BART"
+        if 0 <= idx < len(events):
+            selected_event = events[idx]
+            transcript = selected_event.get('description', '') or selected_event.get('summary', '')
+            payload = {
+                "query": f"summarize the {idx+1}{ordinal(idx+1)[-2:]} event with BART",
+                "mode": model,
+                "model": model,
+                "selected_event_indices": [idx],
+                "processed_transcripts": [transcript]
+            }
+            timeout_val = 1000
+            last_result = _call_and_update(payload, chat_history, timeout=timeout_val)
+            st.session_state['last_result'] = last_result
+        else:
+            st.warning(f"Requested event index {idx+1} is out of range. There are only {len(events)} events.")
+    elif summarize_bart or summarize_mistral:
         model = "BART" if summarize_bart else "Mistral"
         processed_transcripts = st.session_state.get('processed_transcripts', [])
         payload = {"query": f"summarize events", "mode": model, "model": model}
         if processed_transcripts:
             payload["processed_transcripts"] = processed_transcripts
-        timeout_val = 3000 if model == "Mistral" else 90
+        timeout_val = 3000 if model == "Mistral" else 1000
         last_result = _call_and_update(payload, chat_history, timeout=timeout_val)
         st.session_state['last_result'] = last_result
-    elif process_idx is not None and events and 0 <= process_idx < len(events):
-        event = events[process_idx]
-        event_id = event.get('id')
-        if event_id:
-            payload = {"query": f"process event {event_id}", "mode": mode}
-            last_result = _call_and_update(payload, chat_history, timeout=180)
+    elif process_event_ref is not None and events:
+        print("[DEBUG UI] Processing event reference:", process_event_ref)
+        event_id = None
+        selected_event = None
+        if process_event_ref["type"] == "index":
+            idx = process_event_ref["value"]
+            user_event_number = idx + 1
+            if 0 <= idx < len(events):
+                event_id = events[idx].get('id')
+                selected_event = events[idx]
+                event_title = selected_event.get('summary', '')
+                print(f"[DEBUG UI] Selected by index: user_event_number={user_event_number} (event #{user_event_number}: '{event_title}'), event_id={event_id}")
+                st.info(f"Processing the {user_event_number}{ordinal(user_event_number)[-2:]} event: {event_title}")
+            else:
+                st.warning(f"Requested event index {user_event_number} is out of range. There are only {len(events)} events.")
+                print(f"[DEBUG UI] Blocked: event index {user_event_number} out of range.")
+                
+        elif process_event_ref["type"] == "id":
+            for ev in events:
+                if ev.get('id', '').lower() == process_event_ref["value"]:
+                    event_id = ev.get('id')
+                    selected_event = ev
+                    print(f"[DEBUG UI] Selected by id: event_id={event_id}")
+                    break
+            if not selected_event:
+                st.warning(f"No event found for id: {process_event_ref['value']}. Please check event list.")
+                print(f"[DEBUG UI] Blocked: event id {process_event_ref['value']} not found.")
+                
+        elif process_event_ref["type"] == "title":
+            title_query = process_event_ref["value"].strip().lower()
+            # First try exact match
+            for ev in events:
+                event_title = ev.get('summary', '').strip().lower()
+                if event_title == title_query:
+                    event_id = ev.get('id')
+                    selected_event = ev
+                    print(f"[DEBUG UI] Selected by exact title: event_id={event_id}, title={event_title}")
+                    break
+            # If no exact match, try partial match
+            if not selected_event:
+                for ev in events:
+                    event_title = ev.get('summary', '').strip().lower()
+                    if title_query in event_title:
+                        event_id = ev.get('id')
+                        selected_event = ev
+                        print(f"[DEBUG UI] Selected by partial title: event_id={event_id}, title={event_title}")
+                        break
+            if not selected_event:
+                st.warning(f"No event found with title matching '{process_event_ref['value']}'. Please check event list.")
+                print(f"[DEBUG UI] Blocked: event title '{process_event_ref['value']}' not found.")
+                
+        # If we have a valid selected_event, send to backend
+        payload = {"query": f"process event {event_id}", "mode": mode, "event": selected_event}
+        # If selected by index, include selected_event_indices for backend filtering
+        if process_event_ref["type"] == "index":
+            payload["selected_event_indices"] = [process_event_ref["value"]]
+        print(f"[DEBUG UI] Payload being >>>>>>>> sent to backend: {json.dumps(payload, default=str)[:500]}")
+        print(f"[DEBUG UI] Sending process event request to backend for event_id: {payload}")
+        last_result = _call_and_update(payload, chat_history, timeout=1000)
     elif selected_action_items:
+        print(f"[DEBUG UI] Creating Jira for selected action items: {selected_action_items}")
         payload = {"query": chat_input, "mode": mode, "selected_action_items": selected_action_items}
-        last_result = _call_and_update(payload, chat_history, timeout=180)
+        last_result = _call_and_update(payload, chat_history, timeout=1000)
     else:
+        print(f"[DEBUG UI] Sending general query to backend: {chat_input}")
         payload = {"query": chat_input, "mode": mode}
-        last_result = _call_and_update(payload, chat_history, timeout=180)
+        last_result = _call_and_update(payload, chat_history, timeout=1000)
     # Extract events, transcripts, and processed_transcripts if present
     if last_result:
+        #print(f"[DEBUG UI] last_result from backend: {last_result}")
         if isinstance(last_result, dict):
+            print(f"[DEBUG UI] Extracting events/transcripts from last_result...")
             if 'calendar_events' in last_result:
-                events = last_result.get('calendar_events', [])
+                print(f"[DEBUG UI] Found 'calendar_events' in last_result.")
+                st.session_state['events'] = last_result.get('calendar_events', [])
+                events = st.session_state['events']
+                print(f"[DEBUG UI] Events loaded after fetch: {json.dumps(events, default=str)[:10]}")
+                
             elif 'events' in last_result:
-                events = last_result.get('events', [])
+                print(f"[DEBUG UI] Found 'events' in last_result.") 
+                st.session_state['events'] = last_result.get('events', [])
+                events = st.session_state['events']
+                print(f"[DEBUG UI] Events loaded after fetch: {json.dumps(events, default=str)[:10]}")
+                
             if 'calendar_transcripts' in last_result:
+                print(f"[DEBUG UI] Found 'calendar_transcripts' in last_result.")
                 transcripts = last_result.get('calendar_transcripts', [])
             elif 'transcripts' in last_result:
+                print(f"[DEBUG UI] Found 'transcripts' in last_result.")    
                 transcripts = last_result.get('transcripts', [])
-            if 'processed_transcripts' in last_result and last_result['processed_transcripts']:
+            # Only set processed_transcripts to the latest result, not accumulate
+            if 'processed_transcripts' in last_result:
                 st.session_state['processed_transcripts'] = last_result['processed_transcripts']
         # Append to results_history for sidebar/history display
         st.session_state['results_history'].append({
@@ -429,6 +599,7 @@ Use the sidebar for suggestions and history. Use the 'Clear History' button to r
             "result": last_result,
             "events": events if 'events' in locals() else []
         })
+        
 else:
     # On first load, just show welcome and empty state
     last_result = None
@@ -450,16 +621,26 @@ suggestions = []
 if last_result:
     if events:
         st.markdown(f"**Fetched {len(events)} Events**")
-        # Show a table of event summaries only, no selection or details
+        # Show a user-friendly table of event details
+        from dateutil import parser
         event_rows = []
-        for ev in events:
-            row = {}
-            if 'id' in ev:
-                row['id'] = ev['id']
-            if 'summary' in ev:
-                row['summary'] = ev['summary']
+        for idx, ev in enumerate(events, 1):
+            def fmt(dt):
+                try:
+                    return parser.parse(dt).strftime('%Y-%m-%d %H:%M')
+                except Exception:
+                    return dt or 'N/A'
+            start_raw = ev.get('start', {}).get('dateTime', ev.get('start', {}).get('date', 'N/A'))
+            end_raw = ev.get('end', {}).get('dateTime', ev.get('end', {}).get('date', 'N/A'))
+            row = {
+                'Index': idx,
+                'Title': ev.get('summary', ''),
+                'Start': fmt(start_raw),
+                'End': fmt(end_raw),
+                'Event ID': ev.get('id', '')
+            }
             event_rows.append(row)
-        st.table(event_rows)
+        st.dataframe(event_rows, use_container_width=True)
     # Update suggestions dynamically after each processing step
     suggestions = get_dynamic_suggestions(chat_history, last_result, events)
     with st.expander("Processed Transcripts"):
@@ -502,7 +683,7 @@ if last_result:
                 if 'detected_risks' in risk_obj:
                     detected_risks = risk_obj['detected_risks']            
             if detected_risks:
-                print("[DEBUG] detected_risks:", detected_risks)
+                #print("[DEBUG] detected_risks:", detected_risks)
                 display_risks(detected_risks)
             else:
                 st.info("No risks detected.")
@@ -560,7 +741,6 @@ if last_result:
 
 # Suggested commands help box
 with st.expander("Suggested Commands / Tips", expanded=False):
-    print(" [DEBUG] Showing suggested commands...", suggestions)
     sidebar_cmds = {"fetch events", "summarize selected events", "create jira from action items", "process selected events"}
     filtered = [s for s in suggestions if s.lower() not in sidebar_cmds]
     if filtered:

@@ -9,7 +9,7 @@ def a2a_endpoint(func: Callable) -> Callable:
     @wraps(func)
     def wrapper(*args, **kwargs):
         print(f"[A2A] ENTER endpoint: {func.__name__}")
-        print(f"[A2A] Args: {args}")
+        #print(f"[A2A] Args: {args}")
         #print(f"[A2A] Kwargs: {kwargs}")
         try:
             result = func(*args, **kwargs)

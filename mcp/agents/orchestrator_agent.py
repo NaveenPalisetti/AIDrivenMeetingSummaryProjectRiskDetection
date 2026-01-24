@@ -10,12 +10,13 @@ from mcp.agents.mcp_google_calendar import MCPGoogleCalendar
 from mcp.agents.transcript_preprocessing_agent import TranscriptPreprocessingAgent
 from mcp.agents.summarization_agent import SummarizationAgent
 from mcp.agents.risk_detection_agent import RiskDetectionAgent
-from mcp.core.a2a_base_agent import A2AMessage, TaskState
+#from mcp.core.a2a_base_agent import A2AMessage, TaskState
 from mcp.agents.notification_agent import NotificationAgent
 from mcp.agents import langchain_tools as lc_tools
 from mcp.agents.tool_adapter import invoke_tool
 import os
-
+from mcp.agents.jira_agent import JiraAgent
+from mcp.agents.task_manager_agent import TaskManagerAgent
 class OrchestratorState:
     def __init__(self):
         self.state = {}
@@ -26,11 +27,54 @@ class OrchestratorState:
 
 
 class OrchestratorAgent:
+
+
     def __init__(self):
         self.tasks = {}
 
+    def _invoke_tool(self, tool, full_transcript, mode_val=None):
+        # Robust invocation wrapper for LangChain tool-like objects
+        try:
+            if callable(tool):
+                try:
+                    return tool(full_transcript, mode=mode_val)
+                except TypeError:
+                    # Try passing a dict payload
+                    return tool({"transcript": full_transcript, "mode": mode_val})
+            if hasattr(tool, 'run'):
+                try:
+                    return tool.run(full_transcript, mode=mode_val)
+                except TypeError:
+                    return tool.run({"transcript": full_transcript, "mode": mode_val})
+            if hasattr(tool, 'func'):
+                try:
+                    return tool.func(full_transcript, mode=mode_val)
+                except TypeError:
+                    return tool.func({"transcript": full_transcript, "mode": mode_val})
+        except Exception as e:
+            raise
+        raise TypeError("Tool object is not callable and does not expose run/func")
+
+    def _fetch_calendar_events_and_transcripts(self, start_time=None, end_time=None):
+        import datetime
+        if start_time is None or end_time is None:
+            now = datetime.datetime.utcnow()
+            start_time = now - datetime.timedelta(days=37)
+            end_time = now + datetime.timedelta(days=1)
+        cal = MCPGoogleCalendar(calendar_id="primary")
+        fetch_payload = {"start_time": start_time, "end_time": end_time}
+        fetch_response = a2a_request(cal.fetch_events, fetch_payload)
+        if fetch_response.get("status") == "ok":
+            events = fetch_response["result"]
+            transcripts = cal.get_transcripts_from_events(events)
+        else:
+            print(f"[ERROR] Calendar fetch failed: {fetch_response.get('error')}")
+            events = []
+            transcripts = []
+        return events, transcripts
+
     @a2a_endpoint
-    def handle_query(self, query: Any, selected_event_indices: list = None, mode: str = None, user: str = None, date: str = None, permissions: list = None, create_jira: bool = False, stage: str = "fetch", processed_transcripts: list = None, selected_action_items: list = None) -> dict:
+    def handle_query(self, query: Any, selected_event_indices: list = None, mode: str = None, user: str = None, date: str = None, permissions: list = None, create_jira: bool = False, stage: str = "fetch", processed_transcripts: list = None, selected_action_items: list = None, event: dict = None) -> dict:
         """
         Interactive, stepwise workflow for orchestrator:
         stage: 'fetch' | 'preprocess' | 'summarize' | 'jira' | 'risk' | 'notify'
@@ -53,6 +97,20 @@ class OrchestratorAgent:
             if not isinstance(query, dict):
                 query = {"query": query}
             query["selected_action_items"] = selected_action_items
+        # If a single event is provided (for single-event processing), override event selection logic
+        single_event = None
+        single_transcript = None
+        if (isinstance(query, dict) and 'event' in query and query['event'] is not None):
+            single_event = query['event']
+        elif event is not None:
+            single_event = event
+        # If we have a single event, try to get its transcript
+        if single_event is not None:
+            cal = MCPGoogleCalendar(calendar_id="primary")
+            # get_transcripts_from_events expects a list
+            single_transcript_list = cal.get_transcripts_from_events([single_event])
+            if single_transcript_list:
+                single_transcript = single_transcript_list[0]
         try:
             # Optionally run the LangGraph workflow when enabled.
             use_workflow_env = os.environ.get("USE_LANGGRAPH_WORKFLOW")
@@ -105,22 +163,15 @@ class OrchestratorAgent:
                 except Exception as e:
                     print(f"[WARN] LangGraph workflow failed: {e}")
 
+
             if stage == "fetch":
                 print("[DEBUG] Stage: fetch (A2A uniform)")
-                import datetime
-                now = datetime.datetime.utcnow()
-                start_time = now - datetime.timedelta(days=37)
-                end_time = now + datetime.timedelta(days=1)
-                cal = MCPGoogleCalendar(calendar_id="primary")
-                fetch_payload = {"start_time": start_time, "end_time": end_time}
-                fetch_response = a2a_request(cal.fetch_events, fetch_payload)
-                if fetch_response.get("status") == "ok":
-                    events = fetch_response["result"]
-                    transcripts = cal.get_transcripts_from_events(events)
+                # If single_event is provided, return only that event and its transcript
+                if single_event is not None:
+                    events = [single_event]
+                    transcripts = [single_transcript] if single_transcript else []
                 else:
-                    print(f"[ERROR] Calendar fetch failed: {fetch_response.get('error')}")
-                    events = []
-                    transcripts = []
+                    events, transcripts = self._fetch_calendar_events_and_transcripts()
                 print(f"[DEBUG] Events fetched: {len(events)}; Transcripts fetched: {len(transcripts)}")
                 result['calendar_events'] = events
                 result['calendar_transcripts'] = transcripts
@@ -130,35 +181,33 @@ class OrchestratorAgent:
                 return result
 
             if stage == "preprocess":
-                print("[DEBUG] Stage: preprocess")
-                # UI-driven event selection
-                cal_events = []
-                cal_transcripts = []
-                if 'calendar_events' in query and 'calendar_transcripts' in query:
-                    cal_events = query['calendar_events']
-                    cal_transcripts = query['calendar_transcripts']
+                print("[DEBUG] Stage: preprocess (A2A uniform)")
+                # If single_event is provided, process only that event
+                print(f"[DEBUG] single_event: {str(single_event)[:100]}{'...' if single_event and len(str(single_event)) > 100 else ''}")
+                if single_event is not None:
+                    selected_events = [single_event]
+                    selected_transcripts = [single_transcript] if single_transcript else []
+                    print(f"[DEBUG] PREPROCESS: Received single_event from frontend: id={getattr(single_event, 'get', lambda x: single_event.get(x, None))('id') if isinstance(single_event, dict) else str(single_event)[:50]}, transcript_snippet={str(single_transcript)[:100]}")
                 else:
-                    # Fallback: fetch again
-                    cal = MCPGoogleCalendar(calendar_id="primary")
-                    import datetime
-                    now = datetime.datetime.utcnow()
-                    start_time = now - datetime.timedelta(days=37)
-                    end_time = now + datetime.timedelta(days=1)
-                    cal_events = cal.fetch_events(start_time, end_time)
-                    cal_transcripts = cal.get_transcripts_from_events(cal_events)
-                if selected_event_indices is not None and isinstance(selected_event_indices, list) and selected_event_indices:
-                    selected_events = [cal_events[i] for i in selected_event_indices if 0 <= i < len(cal_events)]
-                    selected_transcripts = [cal_transcripts[i] for i in selected_event_indices if 0 <= i < len(cal_transcripts)]
-                else:
-                    selected_events = cal_events
-                    selected_transcripts = cal_transcripts
+                    cal_events = []
+                    cal_transcripts = []
+                    if 'calendar_events' in query and 'calendar_transcripts' in query:
+                        cal_events = query['calendar_events']
+                        cal_transcripts = query['calendar_transcripts']
+                    else:
+                        # Fallback: fetch again using helper
+                        cal_events, cal_transcripts = self._fetch_calendar_events_and_transcripts()
+                    if selected_event_indices is not None and isinstance(selected_event_indices, list) and selected_event_indices:
+                        selected_events = [cal_events[i] for i in selected_event_indices if 0 <= i < len(cal_events)]
+                        selected_transcripts = [cal_transcripts[i] for i in selected_event_indices if 0 <= i < len(cal_transcripts)]
+                    else:
+                        selected_events = cal_events
+                        selected_transcripts = cal_transcripts
                 result['selected_events'] = selected_events
                 result['selected_transcripts'] = selected_transcripts
                 result['transcript_chunks'] = selected_transcripts
-                #print(f"[DEBUG] Selected transcripts for preprocessing: {selected_transcripts}")
                 preproc = TranscriptPreprocessingAgent()
                 preproc_payload = {"transcripts": selected_transcripts}
-                #print(f"[DEBUG] Preprocessing payload: {preproc_payload}")
                 preproc_response = a2a_request(preproc.process, preproc_payload)
                 preproc_response_str = str(preproc_response)
                 print(f"[DEBUG] Preprocessing response: {preproc_response_str[:100]}{'...' if len(preproc_response_str) > 100 else ''}")
@@ -174,7 +223,6 @@ class OrchestratorAgent:
                     result['next_actions'] = ["summarize"]
                 else:
                     result['preprocessing_error'] = preproc_response["error"]
-                #print(f"[DEBUG] Preprocess result: {result}")
                 return result
 
             if stage == "summarize":
@@ -191,18 +239,12 @@ class OrchestratorAgent:
                     else:
                         transcripts_to_summarize = []
 
-                # If still empty, attempt to fetch calendar transcripts as a last resort
+                # If still empty, attempt to fetch calendar transcripts as a last resort using helper
                 transcripts_str = str(transcripts_to_summarize)
                 print(f"[DEBUG] transcripts_to_summarize (after fallback): {transcripts_str[:100]}{'...' if len(transcripts_str) > 100 else ''}")
                 if not transcripts_to_summarize:
                     try:
-                        cal = MCPGoogleCalendar(calendar_id="primary")
-                        import datetime
-                        now = datetime.datetime.utcnow()
-                        start_time = now - datetime.timedelta(days=37)
-                        end_time = now + datetime.timedelta(days=1)
-                        cal_events = cal.fetch_events(start_time, end_time)
-                        transcripts_to_summarize = cal.get_transcripts_from_events(cal_events)
+                        _, transcripts_to_summarize = self._fetch_calendar_events_and_transcripts()
                     except Exception as e:
                         print(f"[WARN] Failed to fetch calendar transcripts as fallback: {e}")
 
@@ -273,27 +315,27 @@ class OrchestratorAgent:
                         print(f"[WARN] LangChain summarizer failed: {e}")
                         summaries = []
                 else:
-                    # Fallback to internal SummarizationAgent
+                    # Protocol-compliant invocation of SummarizationAgent using a2a_request
                     summarizer = SummarizationAgent(mode=mode)
-                    initial_msg = A2AMessage(message_id=str(uuid.uuid4()), role="user")
-                    initial_msg.add_part("application/json", {"processed_transcripts": transcripts_to_summarize, "mode": mode})
-                    task_id = summarizer.create_task(initial_msg)
-                    summary_result = summarizer.summarize_protocol(processed_transcripts=transcripts_to_summarize, mode=mode)
-                    summarizer.update_task(task_id, summary_result, TaskState.COMPLETED)
-                    # summary_result is now a dict with keys: summary, action_items, download_link, etc.
-                    if isinstance(summary_result, dict):
-                        if summary_result.get('summary'):
-                            summaries.append(summary_result['summary'])
-                        if summary_result.get('action_items'):
-                            result['action_items'] = summary_result['action_items']
-                        if summary_result.get('download_link'):
-                            result['download_link'] = summary_result['download_link']
+                    summarize_payload = {"processed_transcripts": transcripts_to_summarize, "mode": mode}
+                    summarize_response = a2a_request(summarizer.summarize_protocol, summarize_payload)
+                    if summarize_response.get("status") == "ok":
+                        summary_result = summarize_response["result"]
+                        if isinstance(summary_result, dict):
+                            if summary_result.get('summary'):
+                                summaries.append(summary_result['summary'])
+                            if summary_result.get('action_items'):
+                                result['action_items'] = summary_result['action_items']
+                            if summary_result.get('download_link'):
+                                result['download_link'] = summary_result['download_link']
+                        else:
+                            # fallback for legacy A2AMessage
+                            if hasattr(summary_result, 'parts'):
+                                for part in summary_result.parts:
+                                    if getattr(part, 'content_type', None) == "text/plain":
+                                        summaries.append(part.content)
                     else:
-                        # fallback for legacy A2AMessage
-                        if hasattr(summary_result, 'parts'):
-                            for part in summary_result.parts:
-                                if getattr(part, 'content_type', None) == "text/plain":
-                                    summaries.append(part.content)
+                        print(f"[ERROR] SummarizationAgent failed: {summarize_response.get('error')}")
 
                 summaries_str = str(summaries)
                 print(f"[DEBUG] Summaries: {summaries_str[:100]}{'...' if len(summaries_str) > 100 else ''}")
@@ -316,22 +358,22 @@ class OrchestratorAgent:
                 else:
                     summaries = query.get('summaries', []) if isinstance(query, dict) else []
                     print(f"[DEBUG] Summaries for jira: {summaries}")
-                from mcp.agents.jira_agent import JiraAgent
+                
                 jira_agent = JiraAgent()
-                jira_msg = A2AMessage(message_id=str(uuid.uuid4()), role="user")
-                jira_msg.add_part("application/json", {"summary": summaries, "user": user, "date": date})
-                print(f"[DEBUG] Jira message: {jira_msg}")
-                jira_task_id = jira_agent.create_task(jira_msg)
-                print(f"[DEBUG] Jira task id: {jira_task_id}")
-                print(f"[DEBUG] Creating Jira issues.summaries={summaries}, user={user}, date={date}")
-                jira_response_msg = jira_agent.create_jira(summaries, user=user, date=date)
-                print(f"[DEBUG] Jira response message: {jira_response_msg}")
-                jira_agent.update_task(jira_task_id, jira_response_msg, TaskState.COMPLETED)
+                jira_payload = {"summary": summaries, "user": user, "date": date}
+                print(f"[DEBUG] Jira payload: {jira_payload}")
+                jira_response = a2a_request(jira_agent.create_jira, jira_payload)
                 created_tasks = []
-                if hasattr(jira_response_msg, 'parts'):
-                    for part in jira_response_msg.parts:
-                        if getattr(part, 'content_type', None) == "application/json":
-                            created_tasks = part.content.get('created_tasks', [])
+                if jira_response.get("status") == "ok":
+                    jira_result = jira_response["result"]
+                    if hasattr(jira_result, 'parts'):
+                        for part in jira_result.parts:
+                            if getattr(part, 'content_type', None) == "application/json":
+                                created_tasks = part.content.get('created_tasks', [])
+                    elif isinstance(jira_result, dict):
+                        created_tasks = jira_result.get('created_tasks', [])
+                else:
+                    print(f"[ERROR] JiraAgent failed: {jira_response.get('error')}")
                 created_tasks_str = str(created_tasks)
                 print(f"[DEBUG] Jira created tasks: {created_tasks_str[:100]}{'...' if len(created_tasks_str) > 100 else ''}")
                 result['jira'] = [created_tasks]
@@ -369,14 +411,18 @@ class OrchestratorAgent:
                     except Exception as e:
                         print(f"[WARN] LangChain risk tool failed: {e}")
                 if not detected_risks:
-                    progress = {}
                     risk_agent = RiskDetectionAgent()
-                    detected_risks = risk_agent.detect(meeting_id=date or "meeting", summary={"summary_text": summary_for_risk}, tasks=tasks_for_risk, progress=progress)
+                    risk_payload = {"meeting_id": date or "meeting", "summary": {"summary_text": summary_for_risk}, "tasks": tasks_for_risk, "progress": {}}
+                    risk_response = a2a_request(risk_agent.detect, risk_payload)
+                    if risk_response.get("status") == "ok":
+                        detected_risks = risk_response["result"]
+                    else:
+                        print(f"[ERROR] RiskDetectionAgent failed: {risk_response.get('error')}")
 
                 # --- Jira-based risk detection ---
                 try:
                     # Import inside the function to avoid circular import
-                    from mcp.agents.task_manager_agent import TaskManagerAgent
+                    
                     tm_agent = TaskManagerAgent()
                     jira_risks = tm_agent.detect_jira_risks()
                     print(f"[DEBUG] Jira-based risks: {jira_risks}")
@@ -432,16 +478,23 @@ class OrchestratorAgent:
                             risks=detected_risks
                         )
                         result['notified'] = True
+                    result['next_actions'] = []
+                    print(f"[DEBUG] Notify result: {result}")
+                    return result
                 else:
                     notification_agent = NotificationAgent()
-                    notification_agent.notify(
-                        meeting_id=date or "meeting",
-                        summary={"summary_text": summary_for_notify},
-                        tasks=tasks_for_notify,
-                        risks=detected_risks
-                    )
-                    print(f"[DEBUG] Notified: {result.get('notified', False)}")
-                    result['notified'] = True
+                    notify_payload = {
+                        "meeting_id": date or "meeting",
+                        "summary": {"summary_text": summary_for_notify},
+                        "tasks": tasks_for_notify,
+                        "risks": detected_risks
+                    }
+                    notify_response = a2a_request(notification_agent.notify, notify_payload)
+                    if notify_response.get("status") == "ok":
+                        result['notified'] = True
+                    else:
+                        print(f"[ERROR] NotificationAgent failed: {notify_response.get('error')}")
+                        result['notified'] = False
                     result['next_actions'] = []
                     print(f"[DEBUG] Notify result: {result}")
                     return result
@@ -455,76 +508,4 @@ class OrchestratorAgent:
             result['error'] = str(e)
             print(f"[DEBUG] Exception result: {result}")
             return result
-
-    def _validate_date(self, date: str) -> bool:
-        # Simple YYYY-MM-DD check
-        import re
-        return bool(re.match(r"^\\d{4}-\\d{2}-\\d{2}$", date))
-
-    def _check_permissions(self, user: str, permissions: List[str]) -> bool:
-        # Stub: always true for demo
-        return True
-
-    def _detect_intent(self, query: str) -> str:
-        # Simple keyword-based intent detection
-        q = query.lower()
-        if "calendar" in q or "event" in q or "fetch transcript" in q:
-            return "calendar"
-        if "summary" in q:
-            return "summarize"
-        if "jira" in q:
-            return "create_jira"
-        return "unknown"
-
-    def _route_agents(self, intent: str) -> List[str]:
-        # Map intent to agent function names
-        if intent == "calendar":
-            return ["calendar_agent"]
-        if intent == "summarize":
-            return ["summary_agent"]
-        if intent == "create_jira":
-            return ["jira_agent"]
-        if intent == "unknown":
-            return ["summary_agent", "jira_agent"]  # Example: run both
-        return []
-
-    def _execute_agents_parallel(self, agents: List[str], query: str, user: str, date: str):
-        # Map agent names to callables
-        def calendar_agent_func(**kwargs):
-            import traceback
-            debug_info = {}
-            try:
-                # Fetch events for the last 7 days and next 1 day
-                cal = MCPGoogleCalendar()
-                import datetime
-                now = datetime.datetime.utcnow()
-                start_time = now - datetime.timedelta(days=7)
-                end_time = now + datetime.timedelta(days=1)
-                debug_info['start_time'] = str(start_time)
-                debug_info['end_time'] = str(end_time)
-                events = cal.fetch_events(start_time, end_time)
-                debug_info['event_count'] = len(events)
-                transcripts = cal.get_transcripts_from_events(events)
-                debug_info['transcript_count'] = len(transcripts)
-                return {"transcripts": transcripts, "event_count": len(events), "debug": debug_info}
-            except Exception as e:
-                debug_info['error'] = str(e)
-                debug_info['traceback'] = traceback.format_exc()
-                return {"error": str(e), "debug": debug_info}
-
-        agent_funcs = {
-            "calendar_agent": calendar_agent_func,
-            "summary_agent": lambda **kwargs: {"summary": f"Summary for {kwargs['query']}"},
-            "jira_agent": lambda **kwargs: {"jira": f"Jira created for {kwargs['query']}"}
-        }
-        results = {}
-        with ThreadPoolExecutor() as executor:
-            futures = {executor.submit(a2a_request, agent_funcs[a], {"query": query, "user": user, "date": date}): a for a in agents}
-            for future in as_completed(futures):
-                agent = futures[future]
-                try:
-                    results[agent] = future.result()
-                except Exception as e:
-                    results[agent] = {"error": str(e)}
-        return results
 

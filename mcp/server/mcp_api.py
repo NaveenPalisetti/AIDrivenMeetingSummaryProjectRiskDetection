@@ -37,7 +37,7 @@ async def summarize(transcript_in: TranscriptIn):
 # New endpoint for orchestrator agent
 @app.post("/mcp/orchestrate")
 async def orchestrate(orchestrator_in: OrchestratorIn):
-    print("[DEBUG] /mcp/orchestrate called")
+    print("[DEBUG] /mcp/orchestrate called",orchestrator_in)
     print(f"[DEBUG] Received query: {orchestrator_in.query}")
     print(f"[DEBUG] Selected event indices: {orchestrator_in.selected_event_indices}")
     print(f"[DEBUG] Mode: {orchestrator_in.mode}")
@@ -67,6 +67,7 @@ async def orchestrate(orchestrator_in: OrchestratorIn):
         processed_transcripts=orchestrator_in.processed_transcripts,
         selected_action_items=orchestrator_in.selected_action_items
     )
-    #print("[DEBUG] Orchestrator result:", result)
     print("[DEBUG] Orchestrator result (truncated):", str(result)[:300], "..." if len(str(result)) > 100 else "result came")
+    #print("[DEBUG] Orchestrator result:", result)
+    
     return result
