@@ -92,27 +92,18 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
         print(f"[Mistral][Chunk {idx+1}] Model output (first 500 chars):\n{mistral_output[:500]}{'...' if len(mistral_output) > 500 else ''}")
 
         def extract_last_json(text):
-            # Try to extract the first valid JSON object from the output
             import re
             # Remove code block markers if present
             text = re.sub(r'```[a-zA-Z]*', '', text)
             text = text.replace('```', '')
-            # Find the first curly brace
-            first = text.find('{')
-            last = text.rfind('}')
-            if first != -1 and last != -1 and last > first:
-                candidate = text[first:last+1]
+            # Try to find all JSON objects in the text
+            matches = list(re.finditer(r'\{[\s\S]*?\}', text))
+            # Try from the last match backwards (most likely to be the real output)
+            for m in reversed(matches):
+                candidate = m.group(0)
                 try:
                     json.loads(candidate)
                     return candidate
-                except Exception:
-                    pass
-            # Fallback: try to find any JSON object in the text
-            matches = re.findall(r'\{[\s\S]*\}', text)
-            for m in matches:
-                try:
-                    json.loads(m)
-                    return m
                 except Exception:
                     continue
             return None
@@ -143,18 +134,34 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
                 print(f"[Mistral][Chunk {idx+1}] JSON parsing error: {e}")
         else:
             print(f"[Mistral][Chunk {idx+1}] No JSON block found in output.")
-            summary_text = []
-            action_items = []
+            # Try to extract a JSON-like block manually (lines between first { and last })
             lines = mistral_output.splitlines()
-            summary_started = False
-            for line in lines:
-                l = line.strip()
-                if l.startswith('-') or l.startswith('1.') or l.startswith('•'):
-                    summary_started = True
-                if summary_started and l:
-                    summary_text.append(l)
+            json_start, json_end = -1, -1
+            for i, line in enumerate(lines):
+                if '{' in line and json_start == -1:
+                    json_start = i
+                if '}' in line:
+                    json_end = i
+            if json_start != -1 and json_end != -1 and json_end > json_start:
+                candidate = '\n'.join(lines[json_start:json_end+1])
+                try:
+                    parsed = json.loads(candidate)
+                    summary_text = parsed.get('summary', [])
+                    action_items = parsed.get('action_items', [])
+                    decisions = parsed.get('decisions', [])
+                    risks = parsed.get('risks', [])
+                    follow_up_questions = parsed.get('follow_up_questions', [])
+                except Exception:
+                    summary_text = []
+                    action_items = []
+            else:
+                summary_text = []
+                action_items = []
+            # If still nothing, do not treat the whole output as summary
             if not summary_text:
-                summary_text = [mistral_output.strip()]
+                print(f"[Mistral][Chunk {idx+1}] No valid summary found in fallback.")
+                summary_text = []
+                action_items = []
         # Clean up and filter out empty/placeholder/point items
         def is_valid_summary_item(item):
             if not item or not isinstance(item, str):
