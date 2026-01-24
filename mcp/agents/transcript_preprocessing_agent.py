@@ -23,15 +23,17 @@ class TranscriptPreprocessingAgent(A2AAgent):
         super().__init__(agent_card)
 
     def process(self, transcripts):
-        # Example: chunk each transcript into pieces of chunk_size characters
+        # Chunk each transcript into pieces of up to 1500 words (to match summarizer)
         processed = []
+        chunk_size = 1500
         for t in transcripts:
             t = t.strip()
             if not t:
                 continue
-            # Simple chunking by character count
-            for i in range(0, len(t), 500):
-                processed.append(t[i:i+500])
+            words = t.split()
+            for i in range(0, len(words), chunk_size):
+                chunk = ' '.join(words[i:i+chunk_size])
+                processed.append(chunk)
         message = A2AMessage(message_id=str(uuid.uuid4()), role="agent")
         message.add_part("application/json", {"processed_transcripts": processed})
         return message

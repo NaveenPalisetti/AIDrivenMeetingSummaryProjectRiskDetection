@@ -23,15 +23,15 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
                 'summary_text': "Transcript too short for summarization.",
                 'action_items': []
             }
-        def chunk_text(text, max_words=900):
+        def chunk_text(text, max_words=1500):
             words = text.split()
             chunks = []
             for i in range(0, len(words), max_words):
                 chunk = ' '.join(words[i:i+max_words])
                 chunks.append(chunk)
             return chunks
-        transcript_chunks = chunk_text(transcript, max_words=900)
-        print(f"[Mistral] Transcript split into {len(transcript_chunks)} chunk(s).")
+        transcript_chunks = chunk_text(transcript, max_words=1500)
+        print(f"[Mistral] Transcript split into {len(transcript_chunks)} chunk(s) (chunk size: 1500 words).")
 
     all_summaries = []
     all_action_items = []
