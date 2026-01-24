@@ -1,5 +1,5 @@
-spacy
-en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
+spacy  # Optional: Only include if not already installed, and do not pin version
+# en_core_web_sm  # Optional: Install manually if needed, or use 'python -m spacy download en_core_web_sm'
 langchain
 langgraph
 transformers>=4.36.0
