@@ -90,22 +90,37 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
         )
         mistral_output = mistral_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
         print(f"[Mistral][Chunk {idx+1}] Model output (first 500 chars):\n{mistral_output[:500]}{'...' if len(mistral_output) > 500 else ''}")
-
+        print(f"[Mistral][Chunk {idx+1}] Full Model output:\n{mistral_output}")
         def extract_last_json(text):
-            import re
-            # Remove code block markers if present
-            text = re.sub(r'```[a-zA-Z]*', '', text)
-            text = text.replace('```', '')
-            # Try to find all JSON objects in the text
-            matches = list(re.finditer(r'\{[\s\S]*?\}', text))
-            # Try from the last match backwards (most likely to be the real output)
-            for m in reversed(matches):
-                candidate = m.group(0)
-                try:
-                    json.loads(candidate)
-                    return candidate
-                except Exception:
-                    continue
+            # Find all top-level JSON objects and return the last one
+            starts = []
+            ends = []
+            brace_count = 0
+            start = None
+            for i, c in enumerate(text):
+                if c == '{':
+                    if brace_count == 0:
+                        start = i
+                    brace_count += 1
+                elif c == '}':
+                    brace_count -= 1
+                    if brace_count == 0 and start is not None:
+                        starts.append(start)
+                        ends.append(i+1)
+                        start = None
+            if starts and ends:
+                # Return the last JSON block
+                candidate = text[starts[-1]:ends[-1]]
+                # Auto-fix: replace single quotes with double quotes, remove trailing commas
+                import re
+                fixed = candidate
+                # Only replace single quotes if it looks like JSON (avoid breaking valid JSON)
+                if fixed.count("'") > fixed.count('"'):
+                    fixed = fixed.replace("'", '"')
+                # Remove trailing commas before } or ]
+                fixed = re.sub(r',([ \t\r\n]*[}\]])', r'\1', fixed)
+                print(f"[Mistral][Chunk {idx+1}] Candidate JSON before parsing:\n{fixed}")
+                return fixed
             return None
 
         json_str = extract_last_json(mistral_output)
@@ -134,34 +149,8 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
                 print(f"[Mistral][Chunk {idx+1}] JSON parsing error: {e}")
         else:
             print(f"[Mistral][Chunk {idx+1}] No JSON block found in output.")
-            # Try to extract a JSON-like block manually (lines between first { and last })
-            lines = mistral_output.splitlines()
-            json_start, json_end = -1, -1
-            for i, line in enumerate(lines):
-                if '{' in line and json_start == -1:
-                    json_start = i
-                if '}' in line:
-                    json_end = i
-            if json_start != -1 and json_end != -1 and json_end > json_start:
-                candidate = '\n'.join(lines[json_start:json_end+1])
-                try:
-                    parsed = json.loads(candidate)
-                    summary_text = parsed.get('summary', [])
-                    action_items = parsed.get('action_items', [])
-                    decisions = parsed.get('decisions', [])
-                    risks = parsed.get('risks', [])
-                    follow_up_questions = parsed.get('follow_up_questions', [])
-                except Exception:
-                    summary_text = []
-                    action_items = []
-            else:
-                summary_text = []
-                action_items = []
-            # If still nothing, do not treat the whole output as summary
-            if not summary_text:
-                print(f"[Mistral][Chunk {idx+1}] No valid summary found in fallback.")
-                summary_text = []
-                action_items = []
+            summary_text = []
+            action_items = []
         # Clean up and filter out empty/placeholder/point items
         def is_valid_summary_item(item):
             if not item or not isinstance(item, str):
@@ -228,8 +217,9 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
                 seen.add(key)
                 deduped.append(item)
         return deduped
-
+    print(f"[Mistral] Deduplicating final results...",all_summaries)
     deduped_summaries = dedup_list(all_summaries)
+    print(f"[Mistral] Deduplicating final deduped_summaries ...",deduped_summaries)
     deduped_action_items = dedup_list(all_action_items)
     deduped_decisions = dedup_list(all_decisions) if 'all_decisions' in locals() else []
     deduped_risks = dedup_list(all_risks) if 'all_risks' in locals() else []
