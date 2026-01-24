@@ -426,6 +426,30 @@ if chat_input:
     if not summarize_nth_event_mistral and summarize_nth_event_mistral_alt:
         summarize_nth_event_mistral = summarize_nth_event_mistral_alt
     process_event_ref = parse_process_event_command(chat_input)
+
+    # Custom query for Mistral model (e.g., "who are the participants in the 1st event with Mistral")
+    custom_mistral_query = re.search(r"(.+?)\s+in\s+the\s+(\d+)(?:st|nd|rd|th)?\s+event\s+with\s+mistral", chat_input.lower())
+    if custom_mistral_query and events:
+        query_text = custom_mistral_query.group(1).strip()
+        idx = int(custom_mistral_query.group(2)) - 1
+        if 0 <= idx < len(events):
+            selected_event = events[idx]
+            transcript = selected_event.get('description', '') or selected_event.get('summary', '')
+            payload = {
+                "query": f"{query_text} in the {idx+1}{ordinal(idx+1)[-2:]} event with Mistral",
+                "mode": "Mistral",
+                "model": "Mistral",
+                "selected_event_indices": [idx],
+                "processed_transcripts": [transcript],
+                "custom_query": query_text
+            }
+            timeout_val = 3000
+            last_result = _call_and_update(payload, chat_history, timeout=timeout_val)
+            st.session_state['last_result'] = last_result
+            st.stop()
+        else:
+            st.warning(f"Requested event index {idx+1} is out of range. There are only {len(events)} events.")
+            st.stop()
     #print(f"[DEBUG UI] chat_input: {chat_input}")
     #print(f"[DEBUG UI] process_event_ref: {process_event_ref}")
 

@@ -3,35 +3,24 @@ import json
 import torch
 
 def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting_id):
-    # Accept either a string (single transcript) or a list (pre-chunked)
+    # Always expect a string transcript, chunk internally
     print("[Mistral] summarize_with_mistral called. Meeting ID:", meeting_id)
-    if isinstance(transcript, list):
-        transcript_chunks = [t for t in transcript if t and len(t.split()) >= 10]
-        print(f"[Mistral] Received transcript as list. {len(transcript_chunks)} valid chunks.")
-        if not transcript_chunks:
-            print("[Mistral] No valid transcript chunks for summarization.")
-            return {
-                'meeting_id': meeting_id,
-                'summary_text': "Transcript too short for summarization.",
-                'action_items': []
-            }
-    else:
-        if not transcript or len(transcript.split()) < 10:
-            print("[Mistral] Transcript too short for summarization.")
-            return {
-                'meeting_id': meeting_id,
-                'summary_text': "Transcript too short for summarization.",
-                'action_items': []
-            }
-        def chunk_text(text, max_words=900):
-            words = text.split()
-            chunks = []
-            for i in range(0, len(words), max_words):
-                chunk = ' '.join(words[i:i+max_words])
-                chunks.append(chunk)
-            return chunks
-        transcript_chunks = chunk_text(transcript, max_words=900)
-        print(f"[Mistral] Transcript split into {len(transcript_chunks)} chunk(s).")
+    if not transcript or not isinstance(transcript, str) or len(transcript.split()) < 10:
+        print("[Mistral] Transcript too short for summarization.")
+        return {
+            'meeting_id': meeting_id,
+            'summary_text': "Transcript too short for summarization.",
+            'action_items': []
+        }
+    def chunk_text(text, max_words=900):
+        words = text.split()
+        chunks = []
+        for i in range(0, len(words), max_words):
+            chunk = ' '.join(words[i:i+max_words])
+            chunks.append(chunk)
+        return chunks
+    transcript_chunks = chunk_text(transcript, max_words=900)
+    print(f"[Mistral] Transcript split into {len(transcript_chunks)} chunk(s).")
 
     all_summaries = []
     all_action_items = []
@@ -42,7 +31,7 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
             "You are an AI specialized in analyzing meeting transcripts.\n"
             "Your task is to produce:\n"
             "1. A clear and concise SUMMARY of the meeting as a numbered or bulleted list (do not use 'point 1', 'point 2', use real content).\n"
-            "2. A list of ACTION ITEMS with owners and deadlines if mentioned.\n"
+            "2. A list of ACTION ITEMS, each with the following fields: summary (short description), assignee (person responsible), issue_type (Story or Task), story_points (if mentioned), and due_date (if mentioned).\n"
             "3. A list of DECISIONS made during the meeting.\n"
             "4. A list of RISKS, blockers, or concerns raised.\n"
             "5. A list of FOLLOW-UP QUESTIONS that attendees should clarify.\n"
@@ -60,7 +49,15 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
             "```json\n"
             "{\n"
             "  \"summary\": [\"<summary bullet 1>\", \"<summary bullet 2>\"],\n"
-            "  \"action_items\": [ {\"task\": \"<task>\", \"owner\": \"<owner>\", \"deadline\": \"<deadline>\"} ]\n"
+            "  \"action_items\": [\n"
+            "    {\n"
+            "      \"summary\": \"<short description>\",\n"
+            "      \"assignee\": \"<person>\",\n"
+            "      \"issue_type\": \"<Story or Task>\",\n"
+            "      \"story_points\": <number or null>,\n"
+            "      \"due_date\": \"<YYYY-MM-DD or Not mentioned>\"\n"
+            "    }\n"
+            "  ]\n"
             "}\n"
             "```\n"
             "\n"
