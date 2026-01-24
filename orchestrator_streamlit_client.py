@@ -322,7 +322,7 @@ def parse_process_event_command(text):
 for entry in results_history:
     if entry['user']:
         st.markdown(f"**You:** {entry['user']}")
-    render_orchestrator_message(entry['result'])
+    render_orchestrator_message(entry['result'])    
     # Show events table if present
     if entry.get('events'):
         st.markdown(f"Fetched {len(entry['events'])} Events")
@@ -336,7 +336,6 @@ for entry in results_history:
             }
             event_rows.append(row)
         st.dataframe(event_rows, use_container_width=True)
-    # Show summaries and action items if present
     result = entry['result']
     if isinstance(result, dict) and result.get('summaries'):
         st.markdown("## Summaries & Action Items")
@@ -362,16 +361,12 @@ for entry in results_history:
     ):
         st.warning("No summaries were returned. Please check the backend or try again.")
     # Show processed transcripts if present
-    #print(" [DEBUG] Checking if result is a dict for processed transcripts...", isinstance(result, dict))
-
     if isinstance(result, dict) and result.get("processed_transcripts"):
         with st.expander("Processed Transcripts"):
             processed = result.get("processed_transcripts", [])
             display_processed_transcripts(processed)
     # Show agent states and outputs if present
-    
     if isinstance(result, dict) and (result.get('preproc_task_state') or result.get('preproc_response') or result.get('summ_task_state') or result.get('summ_response') or result.get('jira') or result.get('risk')):
-        #print("[DEBUG] Showing Agent States & Outputs expander for result:", result)
         with st.expander("Agent States & Outputs"):
             if 'preproc_task_state' in result:
                 st.info(f"Preprocessing Task State: {result['preproc_task_state']}")
@@ -392,7 +387,6 @@ for entry in results_history:
                     st.write(result['risk_task_state'])
                 st.json(result['risk'])
     # Show errors if present
-    #print("[DEBUG] Checking for errors to display...",isinstance(result, dict))
     if isinstance(result, dict):
         with st.expander("Errors & Debug Info"):
             display_errors(result)
@@ -421,11 +415,17 @@ if chat_input:
     chat_history.append({"role": "user", "content": chat_input})
     summarize_bart = re.search(r"summarize events with bart", chat_input, re.IGNORECASE)
     summarize_mistral = re.search(r"summarize events with mistral", chat_input, re.IGNORECASE)
-    summarize_nth_event = re.search(r"summarize the (\d+)(?:st|nd|rd|th)? event with bart", chat_input.lower())
+    summarize_nth_event_bart = re.search(r"summarize the (\d+)(?:st|nd|rd|th)? event with bart", chat_input.lower())
     # Fallback: support 'summarize 2nd event with BART' (without 'the')
-    summarize_nth_event_alt = re.search(r"summarize (\d+)(?:st|nd|rd|th)? event with bart", chat_input.lower())
-    if not summarize_nth_event and summarize_nth_event_alt:
-        summarize_nth_event = summarize_nth_event_alt
+    summarize_nth_event_bart_alt = re.search(r"summarize (\d+)(?:st|nd|rd|th)? event with bart", chat_input.lower())
+    if not summarize_nth_event_bart and summarize_nth_event_bart_alt:
+        summarize_nth_event_bart = summarize_nth_event_bart_alt
+
+    # Add support for 'summarize Nth event with Mistral'
+    summarize_nth_event_mistral = re.search(r"summarize the (\d+)(?:st|nd|rd|th)? event with mistral", chat_input.lower())
+    summarize_nth_event_mistral_alt = re.search(r"summarize (\d+)(?:st|nd|rd|th)? event with mistral", chat_input.lower())
+    if not summarize_nth_event_mistral and summarize_nth_event_mistral_alt:
+        summarize_nth_event_mistral = summarize_nth_event_mistral_alt
     process_event_ref = parse_process_event_command(chat_input)
     #print(f"[DEBUG UI] chat_input: {chat_input}")
     #print(f"[DEBUG UI] process_event_ref: {process_event_ref}")
@@ -473,20 +473,24 @@ Use the sidebar for suggestions and history. Use the 'Clear History' button to r
     print(f"[DEBUG UI] Processing chat input: {chat_input}",process_event_ref)
     print(f"[DEBUG UI] Processing chat input: {chat_input} | Number of e,vents: {len(events)}")
     
-    if summarize_nth_event:
-        idx = int(summarize_nth_event.group(1)) - 1
-        model = "BART"
+    if summarize_nth_event_bart or summarize_nth_event_mistral:
+        if summarize_nth_event_bart:
+            idx = int(summarize_nth_event_bart.group(1)) - 1
+            model = "BART"
+        else:
+            idx = int(summarize_nth_event_mistral.group(1)) - 1
+            model = "Mistral"
         if 0 <= idx < len(events):
             selected_event = events[idx]
             transcript = selected_event.get('description', '') or selected_event.get('summary', '')
             payload = {
-                "query": f"summarize the {idx+1}{ordinal(idx+1)[-2:]} event with BART",
+                "query": f"summarize the {idx+1}{ordinal(idx+1)[-2:]} event with {model}",
                 "mode": model,
                 "model": model,
                 "selected_event_indices": [idx],
                 "processed_transcripts": [transcript]
             }
-            timeout_val = 1000
+            timeout_val = 3000 if model == "Mistral" else 1000
             last_result = _call_and_update(payload, chat_history, timeout=timeout_val)
             st.session_state['last_result'] = last_result
         else:
@@ -619,9 +623,8 @@ for msg in chat_history:
 suggestions = []
 # Show results/expanders after chat history
 if last_result:
+    # Show events table if present in the latest result
     if events:
-        st.markdown(f"**Fetched {len(events)} Events**")
-        # Show a user-friendly table of event details
         from dateutil import parser
         event_rows = []
         for idx, ev in enumerate(events, 1):
@@ -683,7 +686,6 @@ if last_result:
                 if 'detected_risks' in risk_obj:
                     detected_risks = risk_obj['detected_risks']            
             if detected_risks:
-                #print("[DEBUG] detected_risks:", detected_risks)
                 display_risks(detected_risks)
             else:
                 st.info("No risks detected.")
