@@ -39,34 +39,33 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
     for idx, chunk in enumerate(transcript_chunks):
         print(f"[Mistral][Chunk {idx+1}] Processing chunk of length {len(chunk.split())} words.")
         mistral_prompt = (
-            "Role: You are a Senior Technical Analyst. Your goal is to synthesize meeting transcripts into a structured JSON schema for a project management dashboard.\n"
+            "You are an AI specialized in analyzing meeting transcripts.\n"
+            "Your task is to produce:\n"
+            "1. A clear and concise SUMMARY of the meeting as a numbered or bulleted list (do not use 'point 1', 'point 2', use real content).\n"
+            "2. A list of ACTION ITEMS as an array of objects. Use issue_type: 'Story' for major feature creation and 'Task' or 'Bug' for technical sub-work. Each action item must include: summary, assignee, issue_type, and a logical due_date.\n"
+            "3. A list of DECISIONS made during the meeting.\n"
+            "4. A list of RISKS, blockers, or concerns raised.\n"
+            "5. A list of FOLLOW-UP QUESTIONS that attendees should clarify.\n"
             "\n"
-            "Task: Analyze the provided meeting transcript and extract the following fields into a valid JSON object:\n"
-            "Metadata: Meeting ID, Project Name, Topic, and Sprint Number.\n"
-            "Agenda: A bulleted list of the technical goals discussed.\n"
-            "Participants: A list of the attendees and their roles.\n"
-            "Summary Points: High-level takeaways focusing on technical decisions (MQL logic, JPO refactors, UI state).\n"
-            "Risk Factors: Potential technical or process bottlenecks identified during the conversation.\n"
-            "Action Items: A detailed array of objects. Use issue_type: 'Story' for major feature creation and 'Task' or 'Bug' for technical sub-work. Include: summary, assignee, and a logical due_date.\n"
+            "INSTRUCTIONS:\n"
+            "- Read the provided meeting transcript thoroughly.\n"
+            "- Do NOT invent information. Only extract what is explicitly or implicitly present.\n"
+            "- If some sections have no information, return an empty list.\n"
+            "- Keep summary short but complete (5–8 bullet points or numbers).\n"
+            "- Use simple, business-friendly language.\n"
+            "- DO NOT use placeholder text like 'point 1', 'point 2', '<summary bullet 1>', '<task>', etc.\n"
+            "- DO NOT copy the example below. Fill with real meeting content.\n"
             "\n"
-            "Constraints:\n"
-            "- The JSON must be strictly formatted for machine readability.\n"
-            "- Technical terminology (JPO, MQL, REST, Triggers) must be preserved.\n"
-            "- Ensure 'Story' actions are created at the start of new phases.\n"
+            "IMPORTANT: ONLY output the JSON object, and nothing else. Do NOT repeat these instructions. Do NOT include code block markers.\n"
             "\n"
-            "RETURN THE OUTPUT IN THIS EXACT JSON FORMAT (as a code block):\n"
-            "```json\n"
+            "JSON FORMAT:\n"
             "{\n"
-            "  \"metadata\": {\"meeting_id\": \"\", \"project\": \"\", \"topic\": \"\", \"sprint\": \"\"},\n"
-            "  \"agenda\": [\"<goal 1>\", \"<goal 2>\", ...],\n"
-            "  \"participants\": [{\"name\": \"\", \"role\": \"\"}, ...],\n"
-            "  \"summary_points\": [\"<point 1>\", ...],\n"
-            "  \"risk_factors\": [\"<risk 1>\", ...],\n"
-            "  \"action_items\": [\n"
-            "    {\"summary\": \"\", \"assignee\": \"\", \"issue_type\": \"\", \"due_date\": \"\"}\n"
-            "  ]\n"
+            "  \"summary\": [\"Discussed project timeline and deliverables.\", \"Identified key risks for next sprint.\"],\n"
+            "  \"action_items\": [ {\"summary\": \"Implement login feature\", \"assignee\": \"Alice\", \"issue_type\": \"Story\", \"due_date\": \"2026-01-30\"} ],\n"
+            "  \"decisions\": [\"Move forward with vendor A.\"],\n"
+            "  \"risks\": [\"Potential delay due to resource constraints.\"],\n"
+            "  \"follow_up_questions\": [\"Clarify requirements for module X.\"]\n"
             "}\n"
-            "```\n"
             "\n"
             "TRANSCRIPT:\n"
             f"{chunk}\n"
@@ -96,25 +95,29 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
         print(f"[Mistral][Chunk {idx+1}] Model output (first 500 chars):\n{mistral_output[:500]}{'...' if len(mistral_output) > 500 else ''}")
 
         def extract_last_json(text):
-            # Find all top-level JSON objects and return the last one
-            starts = []
-            ends = []
-            brace_count = 0
-            start = None
-            for i, c in enumerate(text):
-                if c == '{':
-                    if brace_count == 0:
-                        start = i
-                    brace_count += 1
-                elif c == '}':
-                    brace_count -= 1
-                    if brace_count == 0 and start is not None:
-                        starts.append(start)
-                        ends.append(i+1)
-                        start = None
-            if starts and ends:
-                # Return the last JSON block
-                return text[starts[-1]:ends[-1]]
+            # Try to extract the first valid JSON object from the output
+            import re
+            # Remove code block markers if present
+            text = re.sub(r'```[a-zA-Z]*', '', text)
+            text = text.replace('```', '')
+            # Find the first curly brace
+            first = text.find('{')
+            last = text.rfind('}')
+            if first != -1 and last != -1 and last > first:
+                candidate = text[first:last+1]
+                try:
+                    json.loads(candidate)
+                    return candidate
+                except Exception:
+                    pass
+            # Fallback: try to find any JSON object in the text
+            matches = re.findall(r'\{[\s\S]*\}', text)
+            for m in matches:
+                try:
+                    json.loads(m)
+                    return m
+                except Exception:
+                    continue
             return None
 
         json_str = extract_last_json(mistral_output)
@@ -124,12 +127,22 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
                 parsed = json.loads(json_str)
                 summary_text = parsed.get('summary', [])
                 action_items = parsed.get('action_items', [])
+                # New fields for decisions, risks, follow_up_questions
+                decisions = parsed.get('decisions', [])
+                risks = parsed.get('risks', [])
+                follow_up_questions = parsed.get('follow_up_questions', [])
                 print(f"[Mistral][Chunk {idx+1}] Parsed summary: {summary_text}")
                 print(f"[Mistral][Chunk {idx+1}] Parsed action_items: {action_items}")
+                print(f"[Mistral][Chunk {idx+1}] Parsed decisions: {decisions}")
+                print(f"[Mistral][Chunk {idx+1}] Parsed risks: {risks}")
+                print(f"[Mistral][Chunk {idx+1}] Parsed follow_up_questions: {follow_up_questions}")
             except Exception as e:
                 print(f"[Mistral][Chunk {idx+1}] JSON parsing error: {e}")
                 summary_text = []
                 action_items = []
+                decisions = []
+                risks = []
+                follow_up_questions = []
         else:
             print(f"[Mistral][Chunk {idx+1}] No JSON block found in output.")
             summary_text = []
@@ -173,12 +186,30 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
             return False
         filtered_summaries = [s for s in (summary_text if isinstance(summary_text, list) else [summary_text]) if is_valid_summary_item(s)]
         filtered_action_items = [a for a in (action_items if isinstance(action_items, list) else [action_items]) if is_valid_action_item(a)]
+        filtered_decisions = [d for d in (decisions if isinstance(decisions, list) else [decisions]) if is_valid_summary_item(d)]
+        filtered_risks = [r for r in (risks if isinstance(risks, list) else [risks]) if is_valid_summary_item(r)]
+        filtered_follow_ups = [f for f in (follow_up_questions if isinstance(follow_up_questions, list) else [follow_up_questions]) if is_valid_summary_item(f)]
         print(f"[Mistral][Chunk {idx+1}] Filtered summary: {filtered_summaries}")
         print(f"[Mistral][Chunk {idx+1}] Filtered action_items: {filtered_action_items}")
+        print(f"[Mistral][Chunk {idx+1}] Filtered decisions: {filtered_decisions}")
+        print(f"[Mistral][Chunk {idx+1}] Filtered risks: {filtered_risks}")
+        print(f"[Mistral][Chunk {idx+1}] Filtered follow_up_questions: {filtered_follow_ups}")
         all_summaries.extend(filtered_summaries)
         all_action_items.extend(filtered_action_items)
+        if 'all_decisions' not in locals():
+            all_decisions = []
+        if 'all_risks' not in locals():
+            all_risks = []
+        if 'all_follow_ups' not in locals():
+            all_follow_ups = []
+        all_decisions.extend(filtered_decisions)
+        all_risks.extend(filtered_risks)
+        all_follow_ups.extend(filtered_follow_ups)
         print(f"[Mistral][Chunk {idx+1}] all_summaries so far: {all_summaries}")
         print(f"[Mistral][Chunk {idx+1}] all_action_items so far: {all_action_items}")
+        print(f"[Mistral][Chunk {idx+1}] all_decisions so far: {all_decisions}")
+        print(f"[Mistral][Chunk {idx+1}] all_risks so far: {all_risks}")
+        print(f"[Mistral][Chunk {idx+1}] all_follow_ups so far: {all_follow_ups}")
 
     # print(f"[Mistral] FINAL all_summaries: {all_summaries}")
     # print(f"[Mistral] FINAL all_action_items: {all_action_items}")
@@ -195,10 +226,19 @@ def summarize_with_mistral(mistral_tokenizer, mistral_model, transcript, meeting
 
     deduped_summaries = dedup_list(all_summaries)
     deduped_action_items = dedup_list(all_action_items)
+    deduped_decisions = dedup_list(all_decisions) if 'all_decisions' in locals() else []
+    deduped_risks = dedup_list(all_risks) if 'all_risks' in locals() else []
+    deduped_follow_ups = dedup_list(all_follow_ups) if 'all_follow_ups' in locals() else []
     print(f"[Mistral] FINAL deduped_summaries: {deduped_summaries}")
     print(f"[Mistral] FINAL deduped_action_items: {deduped_action_items}")
+    print(f"[Mistral] FINAL deduped_decisions: {deduped_decisions}")
+    print(f"[Mistral] FINAL deduped_risks: {deduped_risks}")
+    print(f"[Mistral] FINAL deduped_follow_ups: {deduped_follow_ups}")
     return {
         'meeting_id': meeting_id,
         'summary_text': deduped_summaries,
-        'action_items': deduped_action_items
+        'action_items': deduped_action_items,
+        'decisions': deduped_decisions,
+        'risks': deduped_risks,
+        'follow_up_questions': deduped_follow_ups
     }
