@@ -206,7 +206,7 @@ class OrchestratorAgent:
                 result['selected_events'] = selected_events
                 result['selected_transcripts'] = selected_transcripts
                 result['transcript_chunks'] = selected_transcripts
-                preproc = TranscriptPreprocessingAgent()
+                preproc = c()
                 preproc_payload = {"transcripts": selected_transcripts}
                 preproc_response = a2a_request(preproc.process, preproc_payload)
                 preproc_response_str = str(preproc_response)

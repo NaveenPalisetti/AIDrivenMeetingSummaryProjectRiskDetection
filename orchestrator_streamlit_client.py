@@ -62,56 +62,64 @@ API_URL = "http://localhost:8000/mcp/orchestrate"  # Use local URL for FastAPI b
 st.title("🤖 AI-Driven Meeting Summary & Project Risk Management")
 st.caption("This app sends queries to the orchestrator API and displays the workflow results.")
 
-# --- Google Calendar Event Creator Section ---
+
 from mcp.agents.mcp_google_calendar import MCPGoogleCalendar
 from mcp.protocols.a2a import a2a_request
 
 import datetime
-if 'show_event_form' not in st.session_state:
-    st.session_state['show_event_form'] = False
 
-if not st.session_state['show_event_form']:
-    if st.button("➕ New Google Calendar Event"):
-        st.session_state['show_event_form'] = True
+# --- Ensure events and mode are always defined before using them ---
+if 'events' not in st.session_state:
+    st.session_state['events'] = []
+events = st.session_state['events']
 
-if st.session_state['show_event_form']:
-    st.markdown("## 📅 Create Google Calendar Event")
-    with st.form("event_form"):
-        title = st.text_input("Event Title")
-        description = st.text_area("Description")
-        location = st.text_input("Location")
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input("Start Date", value=datetime.date.today())
-            start_time = st.time_input("Start Time", value=datetime.time(9, 0))
-        with col2:
-            end_date = st.date_input("End Date", value=datetime.date.today())
-            end_time = st.time_input("End Time", value=datetime.time(10, 0))
-        attendees = st.text_area("Attendees (comma-separated emails)")
-        submitted = st.form_submit_button("📅 Create Google Event")
-    if submitted:
-        # Combine date and time into ISO format with UTC offset (assume UTC for simplicity)
-        start_dt = datetime.datetime.combine(start_date, start_time).isoformat() + "+00:00"
-        end_dt = datetime.datetime.combine(end_date, end_time).isoformat() + "+00:00"
-        event_data = {
-            "summary": title,
-            "location": location,
-            "description": description,
-            "start": {"dateTime": start_dt, "timeZone": "UTC"},
-            "end": {"dateTime": end_dt, "timeZone": "UTC"},
-            "attendees": [{"email": email.strip()} for email in attendees.split(",") if email.strip()],
-        }
-        try:
-            calendar_agent = MCPGoogleCalendar()
-            # Use a2a_request with the correct signature
-            response = a2a_request(calendar_agent.create_event, {"event_data": event_data})
-            if response.get("status") == "ok" and isinstance(response.get("result"), dict) and "id" in response["result"]:
-                st.success(f"Event created: {response['result'].get('id')}")
-                st.session_state['show_event_form'] = False
-            else:
-                st.error(f"Failed to create event. {response.get('error', 'Please check your input.')}")
-        except Exception as e:
-            st.error(f"Error creating event: {e}")
+# Only show fetch events UI if no events are present
+if not events:
+    if 'show_event_form' not in st.session_state:
+        st.session_state['show_event_form'] = False
+
+    if not st.session_state['show_event_form']:
+        if st.button("➕ New Google Calendar Event"):
+            st.session_state['show_event_form'] = True
+
+    if st.session_state['show_event_form']:
+        st.markdown("## 📅 Create Google Calendar Event")
+        with st.form("event_form"):
+            title = st.text_input("Event Title")
+            description = st.text_area("Description")
+            location = st.text_input("Location")
+            col1, col2 = st.columns(2)
+            with col1:
+                start_date = st.date_input("Start Date", value=datetime.date.today())
+                start_time = st.time_input("Start Time", value=datetime.time(9, 0))
+            with col2:
+                end_date = st.date_input("End Date", value=datetime.date.today())
+                end_time = st.time_input("End Time", value=datetime.time(10, 0))
+            attendees = st.text_area("Attendees (comma-separated emails)")
+            submitted = st.form_submit_button("📅 Create Google Event")
+        if submitted:
+            # Combine date and time into ISO format with UTC offset (assume UTC for simplicity)
+            start_dt = datetime.datetime.combine(start_date, start_time).isoformat() + "+00:00"
+            end_dt = datetime.datetime.combine(end_date, end_time).isoformat() + "+00:00"
+            event_data = {
+                "summary": title,
+                "location": location,
+                "description": description,
+                "start": {"dateTime": start_dt, "timeZone": "UTC"},
+                "end": {"dateTime": end_dt, "timeZone": "UTC"},
+                "attendees": [{"email": email.strip()} for email in attendees.split(",") if email.strip()],
+            }
+            try:
+                calendar_agent = MCPGoogleCalendar()
+                # Use a2a_request with the correct signature
+                response = a2a_request(calendar_agent.create_event, {"event_data": event_data})
+                if response.get("status") == "ok" and isinstance(response.get("result"), dict) and "id" in response["result"]:
+                    st.success(f"Event created: {response['result'].get('id')}")
+                    st.session_state['show_event_form'] = False
+                else:
+                    st.error(f"Failed to create event. {response.get('error', 'Please check your input.')}")
+            except Exception as e:
+                st.error(f"Error creating event: {e}")
 
 
 # --- Ensure results_history is always initialized ---

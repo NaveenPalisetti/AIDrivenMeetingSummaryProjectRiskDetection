@@ -14,3 +14,5 @@ jira
 google-api-python-client
 google-auth
 google-auth-oauthlib
+datasets
+evaluate

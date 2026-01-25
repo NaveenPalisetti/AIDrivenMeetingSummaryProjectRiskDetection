@@ -51,7 +51,6 @@ def generate_summary_and_actions(transcript, model_path=MODEL_PATH, max_length=5
                 early_stopping=True
             )
         output = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-        # Debug: print each chunk's output
         print(f"\n=== Chunk {idx+1} Output ===\n{output}\n")
         debug_chunks.append(output)
         # Try to parse JSON from model output
@@ -63,21 +62,26 @@ def generate_summary_and_actions(transcript, model_path=MODEL_PATH, max_length=5
                 result = json.loads(json_str)
             except Exception:
                 result = {"summary_points": [output], "action_items": []}
-        # Flatten nested summary_points and action_items if present
-        def flatten(items):
-            flat = []
+
+        # Only keep string items, not dicts/lists as strings
+        def clean_items(items):
+            clean = []
             for item in items:
-                if isinstance(item, dict):
-                    flat.extend(flatten(item.get("summary_points", [])))
-                    flat.extend(flatten(item.get("action_items", [])))
+                if isinstance(item, str):
+                    # Filter out stringified dicts/lists
+                    if not (item.strip().startswith("{") or item.strip().startswith("[")):
+                        clean.append(item.strip())
                 elif isinstance(item, list):
-                    flat.extend(flatten(item))
-                else:
-                    flat.append(item)
-            return flat
-        all_summary_points.extend(flatten(result.get("summary_points", [])))
-        all_action_items.extend(flatten(result.get("action_items", [])))
-    # Aggregate all summary points and action items
+                    clean.extend(clean_items(item))
+                elif isinstance(item, dict):
+                    # If dict, try to extract summary_points/action_items recursively
+                    clean.extend(clean_items(item.get("summary_points", [])))
+                    clean.extend(clean_items(item.get("action_items", [])))
+            return clean
+
+        all_summary_points.extend(clean_items(result.get("summary_points", [])))
+        all_action_items.extend(clean_items(result.get("action_items", [])))
+
     return {"summary_points": all_summary_points, "action_items": all_action_items, "debug_chunks": debug_chunks}
 
 # Simple rule-based extraction: sentences starting with verbs or containing 'should', 'must', 'to', etc.
@@ -95,15 +99,24 @@ def extract_action_items(text):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python generate_summary.py <transcript_file>")
+        print("Usage: python generate_summary.py <transcript_file> [output_file]")
         sys.exit(1)
     transcript_file = sys.argv[1]
+    output_file = sys.argv[2] if len(sys.argv) > 2 else "summary_output.json"
     with open(transcript_file, 'r', encoding='utf-8') as f:
         transcript = f.read()
     result = generate_summary_and_actions(transcript)
+    # Print to console as before
     print("\n=== Aggregated Meeting Summary ===\n")
     for point in result.get("summary_points", []):
         print(f"- {point}")
     print("\n=== Aggregated Action Items ===\n")
     for item in result.get("action_items", []):
         print(f"- {item}")
+    # Save full output (including debug info) to file
+    try:
+        with open(output_file, 'w', encoding='utf-8') as out_f:
+            json.dump(result, out_f, ensure_ascii=False, indent=2)
+        print(f"\nFull output (including debug info) saved to: {output_file}")
+    except Exception as e:
+        print(f"Error saving output to file: {e}")
