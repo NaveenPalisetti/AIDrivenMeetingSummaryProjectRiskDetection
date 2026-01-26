@@ -331,19 +331,7 @@ for entry in results_history:
     if entry['user']:
         st.markdown(f"**You:** {entry['user']}")
     render_orchestrator_message(entry['result'])    
-    # Show events table if present
-    if entry.get('events'):
-        st.markdown(f"Fetched {len(entry['events'])} Events")
-        event_rows = []
-        for ev in entry['events']:
-            row = {
-                'Title': ev.get('summary', ''),
-                'Start': ev.get('start', {}).get('dateTime', ev.get('start', {}).get('date', 'N/A')),
-                'End': ev.get('end', {}).get('dateTime', ev.get('end', {}).get('date', 'N/A')),
-                'Event ID': ev.get('id', '')
-            }
-            event_rows.append(row)
-        st.dataframe(event_rows, use_container_width=True)
+    # ...existing code...
     result = entry['result']
     if isinstance(result, dict) and result.get('summaries'):
         st.markdown("## Summaries & Action Items")
