@@ -490,7 +490,7 @@ Use the sidebar for suggestions and history. Use the 'Clear History' button to r
         # Do not process further if help was requested
         st.stop()
     print(f"[DEBUG UI] Processing chat input: {chat_input}",process_event_ref)
-    print(f"[DEBUG UI] Processing chat input: {chat_input} | Number of e,vents: {len(events)}")
+    print(f"[DEBUG UI] Processing chat input: {chat_input} | Number of events: {len(events)}")
     
     if summarize_nth_event_bart or summarize_nth_event_mistral:
         if summarize_nth_event_bart:
