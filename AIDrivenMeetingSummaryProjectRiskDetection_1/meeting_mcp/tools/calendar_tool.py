@@ -10,7 +10,7 @@ class CalendarTool(MCPTool):
     def __init__(self):
         super().__init__(
             tool_id="calendar",
-            tool_type=MCPToolType.COMMUNICATION,
+            tool_type=MCPToolType.CALENDAR,
             name="Calendar Tool",
             description="MCP Tool wrapper around Google Calendar client",
             api_endpoint="/mcp/calendar",

@@ -28,11 +28,12 @@ class OrchestratorAgent:
         # Prioritize explicit preprocessing/transcript commands before generic calendar keywords
         if any(k in t for k in ("preprocess", "pre-processing", "process", "transcript", "transcripts", "clean")):
             return "preprocess"
-        # Map obvious calendar-related verbs/words to the calendar intent
-        if any(k in t for k in ("calendar", "meeting", "events", "fetch", "get", "list")):
-            return "calendar"
+        # If the user asked for a summary, prefer that before generic calendar keywords
         if "summar" in t or "summary" in t:
             return "summarize"
+        # Map obvious calendar-related verbs/words to the calendar intent
+        if any(k in t for k in ("calendar", "events", "fetch")):
+            return "calendar"
         if "jira" in t or "ticket" in t or "issue" in t:
             return "jira"
         if "notify" in t or "email" in t:

@@ -1,28 +1,30 @@
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Dict
 import os
 
 from fastapi import FastAPI, Depends, Header, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from meeting_mcp.core.mcp import MCPHost
 from meeting_mcp.tools.calendar_tool import CalendarTool
 from meeting_mcp.tools.transcript_tool import TranscriptTool
 from meeting_mcp.tools.summarization_tool import SummarizationTool
+from meeting_mcp.tools.jira_tool import JiraTool
 from meeting_mcp.agents.orchestrator_agent import OrchestratorAgent
+
+from Log.logger import setup_logging
+import logging
 
 
 app = FastAPI(title="meeting_mcp API")
 
-# --- CORS setup (allow localhost during development) ---
-allowed_origins = os.environ.get("MCP_ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# configure file logging (creates Log/meeting_mcp.log in repo)
+try:
+    setup_logging()
+    logging.getLogger(__name__).info("File logging enabled")
+except Exception:
+    logging.getLogger(__name__).exception("Failed to setup file logging")
+
+# Note: CORS middleware removed per request (if needed, re-add carefully)
 
 
 def verify_api_key(x_api_key: Optional[str] = Header(None)):
@@ -43,6 +45,8 @@ transcript_tool = TranscriptTool()
 mcp_host.register_tool(transcript_tool)
 summarization_tool = SummarizationTool()
 mcp_host.register_tool(summarization_tool)
+jira_tool = JiraTool()
+mcp_host.register_tool(jira_tool)
 # Register orchestrator agent wired to the same MCPHost
 orchestrator = OrchestratorAgent(mcp_host=mcp_host)
 
@@ -96,6 +100,12 @@ class SummarizeRequest(BaseModel):
     mode: Optional[str] = None
 
 
+class JiraRequest(BaseModel):
+    action_items: Optional[List[Dict[str, Any]]] = None
+    user: Optional[str] = None
+    date: Optional[str] = None
+
+
 @app.post("/mcp/orchestrate", dependencies=[Depends(verify_api_key)])
 async def call_orchestrate(req: OrchestrateRequest):
     # delegate to the orchestrator agent which will create its own session and invoke tools
@@ -111,6 +121,18 @@ async def call_summarize(req: SummarizeRequest):
     if "processed_transcripts" in params and "processed" not in params:
         params["processed"] = params.get("processed_transcripts")
     result = await mcp_host.execute_tool(session_id, "summarization", params)
+    mcp_host.end_session(session_id)
+    return result
+
+
+@app.post("/mcp/jira", dependencies=[Depends(verify_api_key)])
+async def call_jira(req: JiraRequest):
+    session_id = mcp_host.create_session(agent_id="http-client")
+    params = req.dict(exclude_none=True)
+    # allow alternate key names
+    if "items" in params and "action_items" not in params:
+        params["action_items"] = params.pop("items")
+    result = await mcp_host.execute_tool(session_id, "jira", params)
     mcp_host.end_session(session_id)
     return result
 

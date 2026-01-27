@@ -11,10 +11,12 @@ jira
 pytest
 
 # Model and runtime dependencies for summarization
-transformers>=4.30.0
-torch>=2.0.0
+# Pin transformer and torch to versions known to work together in this project.
+# If you have a CUDA GPU, install the matching torch wheel per https://pytorch.org
 sentencepiece
 # Optional (Mistral / quantized GPU): uncomment if needed
 # accelerate
 # bitsandbytes
 # safetensors
+transformers>=4.36.0
+torch>=2.0.1

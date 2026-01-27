@@ -7,7 +7,15 @@ import streamlit as st
 import logging
 
 # Enable debug logging to surface backend debug messages (e.g. preprocessor)
-#logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("meeting_mcp.ui.streamlit")
+# Also attach the project's rotating file logger so Streamlit logs go to Log/meeting_mcp.log
+try:
+    from Log.logger import setup_logging
+    setup_logging()
+except Exception as _e:
+    # If file logging fails, continue with console logging only
+    logger.debug("setup_logging() failed in streamlit UI: %s", _e)
 
 # Ensure project root is importable when Streamlit runs the script.
 # This is a small developer convenience (prefer running Streamlit from
@@ -74,6 +82,7 @@ render_css()
 st.title("🤖 AI-Driven Meeting Summary & Project Risk Management")
 st.caption("A lightweight UI to run the orchestrator and inspect results.")
 
+
 # Sidebar: summarizer/model selector (BART / Mistral)
 with st.sidebar:
     st.header("🧠 Summarizer Model")
@@ -96,6 +105,8 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
     try:
         # Check for chat command that references last fetched events (e.g. "preprocess this <title>")
         handled = False
+        # Ensure `result` is always defined to avoid NameError in downstream handling
+        result = {"intent": "", "results": {}}
         lower = (prompt or "").lower()
         # Summarize command: if user asks to summarize a previously preprocessed meeting
         if "summarize" in lower and st.session_state.get("last_events"):
@@ -150,11 +161,14 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                     st.markdown(f"Summarize meeting: {meeting_title}")
 
                 try:
+                    logger.debug("Orchestrator preprocess call: meeting=%s", matched.get('summary'))
                     if not processed:
                         # If not preprocessed, trigger preprocess first
                         preprocess_text = matched.get("description") or matched.get("summary") or ""
                         params = {"transcripts": [preprocess_text], "chunk_size": 1500}
+                        logger.debug("Preprocess params: %s", {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in params.items()})
                         proc_result = asyncio.run(orchestrator.orchestrate(f"preprocess transcripts for {meeting_title}", params))
+                        logger.debug("Preprocess result (truncated): %s", str(proc_result)[:1000])
                         proc_summary = proc_result.get("results", {}).get("transcript") or proc_result.get("results")
                         if isinstance(proc_summary, dict) and proc_summary.get("status") == "success":
                             processed = proc_summary.get("processed")
@@ -169,8 +183,11 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                     # Now call summarization tool via orchestrator
                     mode = st.session_state.get('summarizer_model', 'BART')
                     mode_param = 'bart' if mode.lower().startswith('b') else 'mistral'
+                    logger.debug("Orchestrator summarize call: meeting=%s, mode=%s", meeting_title, mode_param)
                     params = {"processed_transcripts": processed or [], "mode": mode_param}
+                    logger.debug("Summarize params: processed_count=%d", len(params.get("processed_transcripts", [])))
                     sum_result = asyncio.run(orchestrator.orchestrate(f"summarize meeting {meeting_title}", params))
+                    logger.debug("Summarize result (truncated): %s", str(sum_result)[:2000])
                     sum_block = sum_result.get('results', {}).get('summarization') or sum_result.get('results')
                     if isinstance(sum_block, dict) and sum_block.get('status') == 'success':
                         summary_obj = sum_block.get('summary')
@@ -258,7 +275,10 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
 
                 try:
                     params = {"transcripts": [preprocess_text], "chunk_size": 1500}
+                    logger.debug("Orchestrator preprocess call (explicit): meeting=%s", matched.get('summary'))
+                    logger.debug("Preprocess params: %s", {k: (str(v)[:200] + '...' if isinstance(v, (str, list, dict)) and len(str(v))>200 else v) for k,v in params.items()})
                     proc_result = asyncio.run(orchestrator.orchestrate(f"preprocess transcripts for {matched.get('summary')}", params))
+                    logger.debug("Preprocess result (truncated): %s", str(proc_result)[:1000])
                     # ensure downstream code that expects `result` has a value
                     result = proc_result
                     proc_summary = proc_result.get("results", {}).get("transcript") or proc_result.get("results")
@@ -291,7 +311,9 @@ if prompt := st.chat_input("Describe your request (press Enter to send)"):
                 handled = True
 
         if not handled:
+            logger.debug("Orchestrator free-form call: prompt=%s", (prompt or '')[:500])
             result = asyncio.run(orchestrator.orchestrate(prompt, {}))
+            logger.debug("Orchestrator free-form result (truncated): %s", str(result)[:2000])
 
         # Add a compact system entry for history (keeps messages small)
         short_summary = result.get("intent", "")
