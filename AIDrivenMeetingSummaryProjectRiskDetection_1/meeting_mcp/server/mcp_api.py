@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, List
 import os
 
 from fastapi import FastAPI, Depends, Header, HTTPException, status
@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 from meeting_mcp.core.mcp import MCPHost
 from meeting_mcp.tools.calendar_tool import CalendarTool
+from meeting_mcp.tools.transcript_tool import TranscriptTool
+from meeting_mcp.tools.summarization_tool import SummarizationTool
 from meeting_mcp.agents.orchestrator_agent import OrchestratorAgent
 
 
@@ -37,6 +39,10 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)):
 mcp_host = MCPHost()
 calendar_tool = CalendarTool()
 mcp_host.register_tool(calendar_tool)
+transcript_tool = TranscriptTool()
+mcp_host.register_tool(transcript_tool)
+summarization_tool = SummarizationTool()
+mcp_host.register_tool(summarization_tool)
 # Register orchestrator agent wired to the same MCPHost
 orchestrator = OrchestratorAgent(mcp_host=mcp_host)
 
@@ -51,6 +57,13 @@ class CalendarRequest(BaseModel):
     time_max: Optional[str] = None
 
 
+class TranscriptRequest(BaseModel):
+    transcripts: Optional[List[str]] = None
+    chunk_size: Optional[int] = None
+    # keep compatibility with orchestrator params
+    data: Optional[Any] = None
+
+
 @app.post("/mcp/calendar", dependencies=[Depends(verify_api_key)])
 async def call_calendar(req: CalendarRequest):
     # create a short-lived session for this HTTP call
@@ -61,15 +74,44 @@ async def call_calendar(req: CalendarRequest):
     return result
 
 
+@app.post("/mcp/transcript", dependencies=[Depends(verify_api_key)])
+async def call_transcript(req: TranscriptRequest):
+    session_id = mcp_host.create_session(agent_id="http-client")
+    params = req.dict(exclude_none=True)
+    # allow `data` to alias `transcripts` for flexibility
+    if "data" in params and "transcripts" not in params:
+        params["transcripts"] = params.pop("data")
+    result = await mcp_host.execute_tool(session_id, "transcript", params)
+    mcp_host.end_session(session_id)
+    return result
+
+
 class OrchestrateRequest(BaseModel):
     message: str
     params: Optional[dict] = None
+
+
+class SummarizeRequest(BaseModel):
+    processed_transcripts: Optional[List[str]] = None
+    mode: Optional[str] = None
 
 
 @app.post("/mcp/orchestrate", dependencies=[Depends(verify_api_key)])
 async def call_orchestrate(req: OrchestrateRequest):
     # delegate to the orchestrator agent which will create its own session and invoke tools
     result = await orchestrator.orchestrate(req.message, req.params or {})
+    return result
+
+
+@app.post("/mcp/summarize", dependencies=[Depends(verify_api_key)])
+async def call_summarize(req: SummarizeRequest):
+    session_id = mcp_host.create_session(agent_id="http-client")
+    params = req.dict(exclude_none=True)
+    # normalize parameter name to match tool expectations
+    if "processed_transcripts" in params and "processed" not in params:
+        params["processed"] = params.get("processed_transcripts")
+    result = await mcp_host.execute_tool(session_id, "summarization", params)
+    mcp_host.end_session(session_id)
     return result
 
 

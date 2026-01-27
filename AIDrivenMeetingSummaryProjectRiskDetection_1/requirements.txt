@@ -9,3 +9,12 @@ requests
 pydantic
 jira
 pytest
+
+# Model and runtime dependencies for summarization
+transformers>=4.30.0
+torch>=2.0.0
+sentencepiece
+# Optional (Mistral / quantized GPU): uncomment if needed
+# accelerate
+# bitsandbytes
+# safetensors

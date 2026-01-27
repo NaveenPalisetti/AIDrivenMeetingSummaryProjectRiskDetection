@@ -37,3 +37,48 @@ def require_env(var_name: str):
     if not val:
         raise EnvironmentError(f"Required environment variable {var_name} not set")
     return val
+
+
+def get_bart_model_path() -> str:
+    """Return BART model path or HF id.
+
+    Resolution order:
+    1. `BART_MODEL_PATH` environment variable
+    2. One-line file at `meeting_mcp/config/bart_model_path.txt`
+    3. None (caller may fall back to project-local default)
+    """
+    val = os.environ.get("BART_MODEL_PATH")
+    if val:
+        return val
+    # Fallback to a small one-line text file next to this module
+    try:
+        here = os.path.abspath(os.path.join(os.path.dirname(__file__), "config", "bart_model_path.txt"))
+        if os.path.exists(here):
+            with open(here, "r", encoding="utf-8") as fh:
+                v = fh.read().strip()
+                return v or None
+    except Exception:
+        pass
+    return None
+
+
+def get_mistral_model_path() -> str:
+    """Return Mistral model path.
+
+    Resolution order:
+    1. `MISTRAL_MODEL_PATH` environment variable
+    2. One-line file at `meeting_mcp/config/mistral_model_path.txt`
+    3. None (caller may fall back to project-local default)
+    """
+    val = os.environ.get("MISTRAL_MODEL_PATH")
+    if val:
+        return val
+    try:
+        here = os.path.abspath(os.path.join(os.path.dirname(__file__), "config", "mistral_model_path.txt"))
+        if os.path.exists(here):
+            with open(here, "r", encoding="utf-8") as fh:
+                v = fh.read().strip()
+                return v or None
+    except Exception:
+        pass
+    return None

@@ -10,6 +10,8 @@ logger = logging.getLogger("meeting_mcp.mcp")
 
 class MCPToolType(Enum):
     COMMUNICATION = "communication"
+    DATAPREPROCESSING = "data_preprocessing"
+    SUMMARIZATION = "summarization"
     OTHER = "other"
 
 

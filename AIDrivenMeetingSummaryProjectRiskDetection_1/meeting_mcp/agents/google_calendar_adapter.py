@@ -76,8 +76,7 @@ class MeetingMCPGoogleCalendar:
         if isinstance(start_time, str):
             start_time = _parse_iso(start_time)
         if isinstance(end_time, str):
-            end_time = _parse_iso(end_time)
-        print(f"Fetching events from {start_time.isoformat()} to {end_time.isoformat()}")   
+            end_time = _parse_iso(end_time)        
         # Helper to format RFC3339 timestamps expected by Google API
         def _to_rfc3339(dt: datetime.datetime) -> str:
             if dt.tzinfo is None:
@@ -114,7 +113,7 @@ class MeetingMCPGoogleCalendar:
             page_token = events_result.get('nextPageToken')
             if not page_token:
                 break
-        print("Google Calendar API called to fetch events.", events)
+        
         return events
 
     def get_availability(self, time_min: str, time_max: str) -> List[Dict[str, Any]]:

@@ -25,6 +25,9 @@ class OrchestratorAgent:
     def detect_intent(self, text: str) -> str:
         """Very small heuristic intent detector. Extend or replace with an LLM-based intent classifier."""
         t = (text or "").lower()
+        # Prioritize explicit preprocessing/transcript commands before generic calendar keywords
+        if any(k in t for k in ("preprocess", "pre-processing", "process", "transcript", "transcripts", "clean")):
+            return "preprocess"
         # Map obvious calendar-related verbs/words to the calendar intent
         if any(k in t for k in ("calendar", "meeting", "events", "fetch", "get", "list")):
             return "calendar"
@@ -43,6 +46,7 @@ class OrchestratorAgent:
         """
         mapping = {
             "calendar": ["calendar"],
+            "preprocess": ["transcript"],
             "summarize": ["summarization"],
             "jira": ["jira_tool"],
             "notify": ["notification"],

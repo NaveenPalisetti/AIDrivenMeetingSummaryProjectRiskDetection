@@ -23,6 +23,8 @@ from typing import Dict, Any, Optional, Tuple
 
 from meeting_mcp.core.mcp import MCPHost
 from meeting_mcp.tools.calendar_tool import CalendarTool
+from meeting_mcp.tools.transcript_tool import TranscriptTool
+from meeting_mcp.tools.summarization_tool import SummarizationTool
 from meeting_mcp.agents.orchestrator_agent import OrchestratorAgent
 
 
@@ -68,19 +70,26 @@ def create_system(mode: str = "hybrid") -> Tuple[Any, InProcessHost, Dict[str, A
 
     # Create tools/adapters
     calendar_tool = CalendarTool()
+    transcript_tool = TranscriptTool()
+    summarization_tool = SummarizationTool()
 
-    tools = {"calendar": calendar_tool}
+    tools = {"calendar": calendar_tool, "transcript": transcript_tool, "summarization": summarization_tool}
 
     # Register tools either on a real MCPHost (for HTTP exposure) or only
     # on the in-process host depending on the chosen mode.
     if mode == "in_process":
         mcp_host = inproc
         inproc.register_tool(calendar_tool)
+        inproc.register_tool(transcript_tool)
+        inproc.register_tool(summarization_tool)
     else:
         mcp_host = MCPHost()
         # register on both host (for external calls) and inproc (for UI)
         mcp_host.register_tool(calendar_tool)
+        mcp_host.register_tool(transcript_tool)
+        mcp_host.register_tool(summarization_tool)
         inproc.register_tool(calendar_tool)
+        inproc.register_tool(transcript_tool)
 
     # Orchestrator wired to whichever host we consider the authoritative
     # execution surface. In hybrid/hosted modes we use the MCPHost so
