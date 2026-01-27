@@ -1,0 +1,11 @@
+fastapi>=0.95.0
+uvicorn[standard]
+streamlit
+google-api-python-client
+google-auth
+google-auth-oauthlib
+python-dotenv
+requests
+pydantic
+jira
+pytest
