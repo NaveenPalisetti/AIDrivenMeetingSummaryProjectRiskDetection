@@ -81,8 +81,8 @@ class JiraAgent(A2AAgent):
 
         created_tasks = []
         for item in action_items:
-            # Use 'summary' field as Jira title if present, else fallback
-            title = item.get('summary') or item.get('title') or str(item)
+            # Use 'summary' field as Jira title if present, else fallback to 'title', then 'task', then str(item)
+            title = item.get('summary') or item.get('title') or item.get('task') or str(item)
             # Remove newlines from summary/title for Jira
             if isinstance(title, str):
                 title = title.replace('\n', ' ').replace('\r', ' ')
