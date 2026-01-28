@@ -31,6 +31,8 @@ class OrchestratorAgent:
         # If the user asked for a summary, prefer that before generic calendar keywords
         if "summar" in t or "summary" in t:
             return "summarize"
+        if "risk" in t or "detect risk" in t or "risks" in t:
+            return "risk"
         # Map obvious calendar-related verbs/words to the calendar intent
         if any(k in t for k in ("calendar", "events", "fetch")):
             return "calendar"
@@ -49,6 +51,7 @@ class OrchestratorAgent:
             "calendar": ["calendar"],
             "preprocess": ["transcript"],
             "summarize": ["summarization"],
+            "risk": ["risk"],
             "jira": ["jira_tool"],
             "notify": ["notification"],
             "default": ["summarization"]

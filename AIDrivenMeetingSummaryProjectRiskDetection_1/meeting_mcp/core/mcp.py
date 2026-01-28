@@ -12,6 +12,8 @@ class MCPToolType(Enum):
     CALENDAR = "calendar"
     DATAPREPROCESSING = "data_preprocessing"
     SUMMARIZATION = "summarization"
+    NOTIFICATION = "notification"
+    RISK_DETECTION = "risk_detection"
     JIRA = "jira"
     OTHER = "other"
 

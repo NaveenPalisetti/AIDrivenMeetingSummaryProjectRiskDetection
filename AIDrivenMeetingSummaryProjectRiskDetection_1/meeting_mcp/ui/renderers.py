@@ -103,13 +103,60 @@ def render_summary_result(summary_obj, title, add_message):
     if isinstance(summary_obj, dict) and summary_obj.get('action_items'):
         st.subheader("Action Items")
         ais = summary_obj.get('action_items')
+        # persist last action items for chat commands (e.g., 'create jira: <task>')
+        try:
+            st.session_state['last_action_items'] = ais
+        except Exception:
+            pass
+        # Build table rows
+        rows = []
         for ai in ais:
             if isinstance(ai, dict):
-                owner = ai.get('assignee') or ai.get('owner') or ai.get('assignee')
+                # normalize possible keys from different summarizers (mistral vs bart vs extractor)
+                owner = ai.get('assignee') or ai.get('owner') or ai.get('assigned_to') or "Unassigned"
                 summary_field = ai.get('summary') or ai.get('task') or ai.get('title') or str(ai)
-                st.markdown(f"- **{summary_field}** — owner: {owner}")
+                due = ai.get('due') or ai.get('due_date') or ai.get('deadline') or ""
+                confidence = ai.get('confidence') if isinstance(ai.get('confidence'), (int, float)) else ai.get('confidence', "")
             else:
-                st.markdown(f"- {ai}")
+                owner = "Unassigned"
+                summary_field = str(ai)
+                due = ""
+                confidence = ""
+            rows.append({"Action": summary_field, "Owner": owner, "Due": due, "Confidence": confidence})
+
+        # Display as a table for clarity
+        try:
+            import pandas as pd
+            df = pd.DataFrame(rows)
+            st.dataframe(df, use_container_width=True)
+        except Exception:
+            # Fallback to simple table if pandas not available
+            st.table(rows)
+
+        # For each item, provide an expander with full details and quick actions
+        for idx, ai in enumerate(ais):
+            title = (ai.get('summary') or ai.get('task') or ai.get('title')) if isinstance(ai, dict) else str(ai)
+            with st.expander(f"Details — {title[:80]}", expanded=False):
+                if isinstance(ai, dict):
+                    st.markdown(f"**Action:** {ai.get('summary') or ai.get('task') or ai.get('title')}")
+                    st.markdown(f"**Owner:** {ai.get('assignee') or ai.get('owner') or ai.get('assigned_to') or 'Unassigned'}")
+                    if ai.get('due') or ai.get('deadline') or ai.get('due_date'):
+                        st.markdown(f"**Due:** {ai.get('due') or ai.get('deadline') or ai.get('due_date')}")
+                    if ai.get('raw'):
+                        st.markdown(f"**Raw:** {ai.get('raw')}")
+                else:
+                    st.write(ai)
+
+                cols = st.columns([1,1,1])
+                with cols[0]:
+                    if st.button(f"Assign", key=f"assign_{idx}"):
+                        st.info("Assign clicked — implement assignment flow.")
+                with cols[1]:
+                    if st.button(f"Edit", key=f"edit_{idx}"):
+                        st.info("Edit clicked — implement inline edit flow.")
+                with cols[2]:
+                    if st.button(f"Create Jira", key=f"jira_{idx}"):
+                        st.info("Create Jira clicked — implement jira agent call.")
 
 
 def render_calendar_result(calendar_block, orchestrator, add_message):
@@ -250,6 +297,53 @@ def render_calendar_result(calendar_block, orchestrator, add_message):
                                 add_message("system", f"Error: {e}")
                                 with st.chat_message("assistant"):
                                     st.markdown(f"Error: {e}")
+                            # Detect Risks button (calls orchestrator/risk tool)
+                            detect_key = f"detect_risks_{ev_key}"
+                            if st.button("Detect Risks for this meeting", key=detect_key):
+                                add_message("user", f"Detect risks: {title}")
+                                with st.chat_message("user"):
+                                    st.markdown(f"Detect risks: {title}")
+                                try:
+                                    params = {"meeting_id": title, "summary": {"summary_text": preprocess_text}, "include_jira": True}
+                                    if st.session_state.get('last_action_items'):
+                                        params['tasks'] = st.session_state.get('last_action_items')
+                                    # delegate to orchestrator for risk detection
+                                    risk_result = asyncio.run(orchestrator.orchestrate(f"detect risk for {title}", params))
+                                    add_message("assistant", f"Risk detection for {title} completed.")
+                                    with st.chat_message("assistant"):
+                                        try:
+                                            render_risk_result(risk_result, title, add_message)
+                                        except Exception:
+                                            st.markdown("Risk detection result:\n\n```json\n" + json.dumps(risk_result, indent=2) + "\n```")
+                                except Exception as e:
+                                    add_message("system", f"Error running risk detection: {e}")
+                                    with st.chat_message("assistant"):
+                                        st.markdown(f"Error running risk detection: {e}")
+                            # Notify button: send summary/tasks/risks to external notification channels
+                            notify_key = f"notify_{ev_key}"
+                            if st.button("Notify team for this meeting", key=notify_key):
+                                add_message("user", f"Notify team for: {title}")
+                                with st.chat_message("user"):
+                                    st.markdown(f"Notify team for: {title}")
+                                try:
+                                    params = {"meeting_id": title, "summary": {"summary_text": preprocess_text}}
+                                    if st.session_state.get('last_action_items'):
+                                        params['tasks'] = st.session_state.get('last_action_items')
+                                    # include any last detected risks if present
+                                    if st.session_state.get('last_risks'):
+                                        params['risks'] = st.session_state.get('last_risks')
+
+                                    notify_result = asyncio.run(orchestrator.orchestrate(f"notify for {title}", params))
+                                    add_message("assistant", f"Notification result for {title}: {notify_result.get('results', {})}")
+                                    with st.chat_message("assistant"):
+                                        try:
+                                            render_notification_result(notify_result, title, add_message)
+                                        except Exception:
+                                            st.write(notify_result)
+                                except Exception as e:
+                                    add_message("system", f"Error sending notification: {e}")
+                                    with st.chat_message("assistant"):
+                                        st.markdown(f"Error sending notification: {e}")
                 with cols[1]:
                     st.markdown("**Metadata**")
                     st.write({k: ev.get(k) for k in ("id", "status", "iCalUID") if ev.get(k)})
@@ -260,3 +354,126 @@ def render_calendar_result(calendar_block, orchestrator, add_message):
     else:
         # Fallback: show full result as formatted JSON
         st.markdown("Result:\n\n" + "```json\n" + json.dumps(calendar_block, indent=2) + "\n```")
+
+
+def render_risk_result(risk_obj, title: str | None, add_message):
+    """Render risk detection results in a friendly table and expanders.
+
+    Accepts either an aggregated orchestrator response (with 'results' mapping)
+    or a direct tool response containing 'risks', 'summary_risks', 'jira_risks'.
+    """
+    # Normalize to tool result
+    if isinstance(risk_obj, dict) and 'results' in risk_obj:
+        # aggregated orchestrator result -> extract 'risk' tool output
+        tool_res = risk_obj.get('results', {}).get('risk') or risk_obj.get('results')
+    else:
+        tool_res = risk_obj
+
+    # Tool-level result may itself be wrapped: {status: success, risks: [...]}
+    if isinstance(tool_res, dict) and tool_res.get('status') in ('success', 'ok') and 'risks' in tool_res:
+        risks = tool_res.get('risks', []) or []
+        summary_risks = tool_res.get('summary_risks', []) or []
+        jira_risks = tool_res.get('jira_risks', []) or []
+    else:
+        # Try to extract list-like payloads
+        if isinstance(tool_res, list):
+            risks = tool_res
+            summary_risks = []
+            jira_risks = []
+        else:
+            risks = []
+            summary_risks = []
+            jira_risks = []
+
+    # Persist last risks for later actions
+    try:
+        st.session_state['last_risks'] = risks
+    except Exception:
+        pass
+
+    st.header(f"Risks — {title or 'meeting'}")
+    if not risks:
+        st.info("No risks detected.")
+        return
+
+    # Build display rows
+    rows = []
+    for r in risks:
+        if isinstance(r, dict):
+            rows.append({
+                'ID': r.get('id') or r.get('key') or '',
+                'Type': r.get('type') or r.get('severity') or '',
+                'Summary': r.get('summary') or r.get('description') or '',
+                'Source': r.get('source') or '',
+            })
+        else:
+            rows.append({'ID': '', 'Type': '', 'Summary': str(r), 'Source': ''})
+
+    try:
+        import pandas as pd
+        df = pd.DataFrame(rows)
+        st.dataframe(df, use_container_width=True)
+    except Exception:
+        st.table(rows)
+
+    # Provide expanders for full detail per risk
+    for idx, r in enumerate(risks):
+        with st.expander(f"Risk {idx+1}: { (r.get('summary') or r.get('description') or str(r))[:80] }", expanded=False):
+            if isinstance(r, dict):
+                for k, v in r.items():
+                    st.markdown(f"**{k}**: {v}")
+            else:
+                st.write(r)
+
+    # Show separated lists if present
+    if summary_risks:
+        with st.expander("Summary-derived risks", expanded=False):
+            st.json(summary_risks)
+    if jira_risks:
+        with st.expander("Jira-derived risks", expanded=False):
+            st.json(jira_risks)
+
+
+def render_notification_result(notify_obj, title: str | None, add_message):
+    """Render notification tool results in a concise, user-friendly way.
+
+    Accepts either an orchestrator-wrapped response (with 'results') or
+    a direct tool response such as {"status":"success","notified":True}.
+    """
+    # Normalize orchestrator-style wrappers
+    if isinstance(notify_obj, dict) and 'results' in notify_obj:
+        tool_res = notify_obj.get('results', {}).get('notification') or notify_obj.get('results')
+    else:
+        tool_res = notify_obj
+
+    st.header(f"Notification — {title or 'meeting'}")
+
+    if isinstance(tool_res, dict):
+        status = tool_res.get('status') or tool_res.get('result') or 'unknown'
+        notified = tool_res.get('notified')
+        msg = tool_res.get('message') or tool_res.get('details') or None
+
+        st.markdown(f"**Status:** {status}")
+        if isinstance(notified, bool):
+            st.markdown(f"**Notified:** {'Yes' if notified else 'No'}")
+        if msg:
+            st.markdown(f"**Message:** {msg}")
+
+        # Persist a short assistant message to history
+        try:
+            add_message('assistant', f"Notification status: {status}")
+        except Exception:
+            pass
+
+        # Offer full payload for debugging
+        with st.expander("Full notification payload", expanded=False):
+            try:
+                st.json(tool_res)
+            except Exception:
+                st.write(tool_res)
+    else:
+        # Unknown shape — display raw
+        try:
+            st.write(tool_res)
+        except Exception:
+            st.text(str(tool_res))

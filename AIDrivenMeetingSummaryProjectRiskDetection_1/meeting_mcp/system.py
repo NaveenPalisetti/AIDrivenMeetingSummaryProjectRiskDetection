@@ -26,6 +26,8 @@ from meeting_mcp.tools.calendar_tool import CalendarTool
 from meeting_mcp.tools.transcript_tool import TranscriptTool
 from meeting_mcp.tools.summarization_tool import SummarizationTool
 from meeting_mcp.tools.jira_tool import JiraTool
+from meeting_mcp.tools.risk_tool import RiskTool
+from meeting_mcp.tools.notification_tool import NotificationTool
 from meeting_mcp.agents.orchestrator_agent import OrchestratorAgent
 
 
@@ -74,12 +76,16 @@ def create_system(mode: str = "hybrid") -> Tuple[Any, InProcessHost, Dict[str, A
     transcript_tool = TranscriptTool()
     summarization_tool = SummarizationTool()
     jira_tool = JiraTool()
+    risk_tool = RiskTool()
+    notification_tool = NotificationTool()
 
     tools = {
         "calendar": calendar_tool,
         "transcript": transcript_tool,
         "summarization": summarization_tool,
-        "jira": jira_tool
+        "jira": jira_tool,
+        "risk": risk_tool
+        ,"notification": notification_tool
     }
 
     # Register tools either on a real MCPHost (for HTTP exposure) or only
@@ -90,6 +96,8 @@ def create_system(mode: str = "hybrid") -> Tuple[Any, InProcessHost, Dict[str, A
         inproc.register_tool(transcript_tool)
         inproc.register_tool(summarization_tool)
         inproc.register_tool(jira_tool)
+        inproc.register_tool(risk_tool)
+        inproc.register_tool(notification_tool)
     else:
         mcp_host = MCPHost()
         # register on both host (for external calls) and inproc (for UI)
@@ -97,10 +105,14 @@ def create_system(mode: str = "hybrid") -> Tuple[Any, InProcessHost, Dict[str, A
         mcp_host.register_tool(transcript_tool)
         mcp_host.register_tool(summarization_tool)
         mcp_host.register_tool(jira_tool)
+        mcp_host.register_tool(risk_tool)
+        mcp_host.register_tool(notification_tool)
         inproc.register_tool(calendar_tool)
         inproc.register_tool(transcript_tool)
         inproc.register_tool(summarization_tool)
         inproc.register_tool(jira_tool)
+        inproc.register_tool(risk_tool)
+        inproc.register_tool(notification_tool)
 
     # Orchestrator wired to whichever host we consider the authoritative
     # execution surface. In hybrid/hosted modes we use the MCPHost so

@@ -9,6 +9,7 @@ from meeting_mcp.tools.calendar_tool import CalendarTool
 from meeting_mcp.tools.transcript_tool import TranscriptTool
 from meeting_mcp.tools.summarization_tool import SummarizationTool
 from meeting_mcp.tools.jira_tool import JiraTool
+from meeting_mcp.tools.risk_tool import RiskTool
 from meeting_mcp.agents.orchestrator_agent import OrchestratorAgent
 
 from Log.logger import setup_logging
@@ -47,6 +48,8 @@ summarization_tool = SummarizationTool()
 mcp_host.register_tool(summarization_tool)
 jira_tool = JiraTool()
 mcp_host.register_tool(jira_tool)
+risk_tool = RiskTool()
+mcp_host.register_tool(risk_tool)
 # Register orchestrator agent wired to the same MCPHost
 orchestrator = OrchestratorAgent(mcp_host=mcp_host)
 
@@ -106,6 +109,13 @@ class JiraRequest(BaseModel):
     date: Optional[str] = None
 
 
+class RiskRequest(BaseModel):
+    meeting_id: Optional[str] = None
+    summary: Optional[Dict[str, Any]] = None
+    tasks: Optional[List[Dict[str, Any]]] = None
+    progress: Optional[Dict[str, Any]] = None
+
+
 @app.post("/mcp/orchestrate", dependencies=[Depends(verify_api_key)])
 async def call_orchestrate(req: OrchestrateRequest):
     # delegate to the orchestrator agent which will create its own session and invoke tools
@@ -133,6 +143,18 @@ async def call_jira(req: JiraRequest):
     if "items" in params and "action_items" not in params:
         params["action_items"] = params.pop("items")
     result = await mcp_host.execute_tool(session_id, "jira", params)
+    mcp_host.end_session(session_id)
+    return result
+
+
+@app.post("/mcp/risk", dependencies=[Depends(verify_api_key)])
+async def call_risk(req: RiskRequest):
+    session_id = mcp_host.create_session(agent_id="http-client")
+    params = req.dict(exclude_none=True)
+    # allow flexibility in parameter names
+    if "meeting_id" not in params and "meeting" in params:
+        params["meeting_id"] = params.pop("meeting")
+    result = await mcp_host.execute_tool(session_id, "risk", params)
     mcp_host.end_session(session_id)
     return result
 
